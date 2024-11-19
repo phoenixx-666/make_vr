@@ -1,0 +1,2 @@
+PyTaskbarProgress==0.0.8
+tzlocal==5.2
