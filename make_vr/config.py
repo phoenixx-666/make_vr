@@ -44,6 +44,7 @@ class Config:
     extra_video_filter: list[str] = field(default_factory=list)
     separate_audio: bool = False
     fill_end: bool = False
+    wav_duration: float | None = None
 
     quality: int = 2
     do_image: bool | None = None
@@ -91,6 +92,8 @@ class Config:
                                help='If two videos are of unequal length after synchronization, '
                                     'fill the end of the resulting video with non-stereo content, '
                                     'up to the duration of the longer video')
+        arg_group.add_argument('--wav-duration', type=duration, metavar='DURATION',
+                               help='Portion of sound to extract from left and right video that will be used in automatic synchronization')
 
         arg_group = parser.add_argument_group('Photo options')
         arg_group.add_argument('-q', '--quality', type=int, default=2, help='Output photo quality')
@@ -130,6 +133,7 @@ class Config:
             extra_video_filter=args.extra_video_filter or [],
             separate_audio=args.separate_audio,
             fill_end=args.fill_end,
+            wav_duration=args.wav_duration,
 
             quality=args.quality,
 

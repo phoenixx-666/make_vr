@@ -98,7 +98,10 @@ def make_video(cfg: Config):
         cut_index = int(cfg.override_offset[0])
         time_diff = duration(cfg.override_offset[1])
     else:
-        wav_duration = abs(sum(map(lambda m: m.duration, metadata[0])) - sum(map(lambda m: m.duration, metadata[1]))) + 60.0
+        if cfg.wav_duration is not None:
+            wav_duration = cfg.wav_duration
+        else:
+            wav_duration = abs(sum(map(lambda m: m.duration, metadata[0])) - sum(map(lambda m: m.duration, metadata[1]))) + 60.0
         print(f'wav_duration={d_to_hms(wav_duration)} ({fts(wav_duration)} s)')
         left_a, rate = get_wav_samples(cfg, 'left', wav_duration)
         right_a, _ = get_wav_samples(cfg, 'right', wav_duration)
