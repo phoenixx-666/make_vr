@@ -1,24 +1,62 @@
+from datetime import datetime
+from exif import Image
+import filetype
 import itertools
+import json
 from msvcrt import getch
 import os
+import subprocess as sp
+from typing import Any
 
 import filetype
 
 from .config import Config
 
 
-__all__ = ['get_output_filename', 'swap_extension', 'resolve_existsing', 'find_closest', 'validate_input_files']
+__all__ = ['probe', 'get_output_filename', 'swap_extension', 'resolve_existsing', 'find_closest', 'validate_input_files']
 
 
-def find_closest(dir: str, reference: str) -> tuple[str | None, float]:
-    ref_edit_date = os.stat(reference).st_mtime_ns
-    ref_ext = os.path.splitext(reference)[1].lower()
+def probe(cfg: Config, fn: str) -> Any:
+    command = [cfg.ffprobe_path, '-v', 'quiet', '-print_format', 'json', '-show_format', '-show_streams', fn]
+    with sp.Popen(command, stdout=sp.PIPE) as proc:
+        return json.load(proc.stdout)
+
+
+def get_creation_date(cfg: Config, fn: str) -> datetime:
+    json_data = probe(cfg, fn)
+    try:
+        date = json_data['format']['tags']['creation_time']
+        return datetime.strptime(date, '%Y-%m-%dT%H:%M:%S.%fZ')
+    except (TypeError, KeyError, ValueError, PermissionError):
+        ...
+
+    try:
+        if filetype.is_image(fn):
+            with open(fn, 'rb') as image_file:
+                image = Image(image_file)
+            if not image.has_exif:
+                return None
+            return datetime.strptime(image.datetime, '%Y:%m:%d %H:%M:%S')
+    except (TypeError, AttributeError, ValueError, PermissionError):
+        ...
+
+    return None
+
+
+def find_closest(cfg: Config, dir: str, reference: str) -> tuple[str | None, float]:
     diff = float('inf')
     closest = None
+
+    ref_date = get_creation_date(cfg, reference)
+    ref_ext = os.path.splitext(reference)[1].lower()
+
     for file in (f for f in next(os.walk(dir))[2] if os.path.splitext(f)[1].lower() == ref_ext):
-        if (newdiff := abs(os.stat(fn := os.path.join(dir, file)).st_mtime_ns - ref_edit_date)) < diff:
+        fn = os.path.join(dir, file)
+        date = get_creation_date(cfg, fn)
+        newdiff = abs(date - ref_date).total_seconds()
+        if newdiff < diff:
             closest, diff = fn, newdiff
-    return closest, diff / 1e9
+    return closest, diff
 
 
 def rename(fn: str) -> str:
@@ -108,10 +146,10 @@ def validate_input_files(cfg: Config):
             print('Both inputs can\'t be directories')
             exit(1)
         if left_dir:
-            closest, diff = find_closest(left[0], right[0])
+            closest, diff = find_closest(cfg, left[0], right[0])
             left = [closest]
         else:
-            closest, diff = find_closest(right[0], left[0])
+            closest, diff = find_closest(cfg, right[0], left[0])
             right = [closest]
         if closest:
             if cfg.yes:

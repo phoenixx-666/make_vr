@@ -16,7 +16,7 @@ from tqdm import tqdm
 from .audio import get_wav_samples, find_offset
 from .config import Config
 from .filters import Filter, FilterSeq, FilterGraph, fts
-from .fs import get_output_filename, resolve_existing, swap_extension
+from .fs import probe, get_output_filename, resolve_existing, swap_extension
 from .shell import print_command
 
 
@@ -87,12 +87,8 @@ def make_video(cfg: Config):
     if cfg.do_audio and cfg.separate_audio:
         out_wav = resolve_existing(cfg, swap_extension(out, 'wav'))
 
-    def probe(fn: str) -> Any:
-        command = [cfg.ffprobe_path, '-v', 'quiet', '-print_format', 'json', '-show_format', '-show_streams', fn]
-        with sp.Popen(command, stdout=sp.PIPE) as proc:
-            return json.load(proc.stdout)
-
-    metadata = [list(map(get_metadata, map(probe, inputs)))
+    probe_ = lambda fn: probe(cfg, fn)
+    metadata = [list(map(get_metadata, map(probe_, inputs)))
                 for inputs in (left, right)]
     if cfg.override_offset:
         cut_index = int(cfg.override_offset[0])
