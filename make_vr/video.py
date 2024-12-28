@@ -134,112 +134,152 @@ def make_video(cfg: Config):
     command.extend(['-y'])
 
     fps = metadata[0][0].fps
-    command.extend(['-f', 'lavfi', '-i', Filter('color', color='black', s=f'{SIDE * 2}x{SIDE}', r=fps).render()])
 
-    all_inputs = (left_inputs, right_inputs) = [], []
-    k = 1
-    for i in range(2):
-        for input in [cfg.left, cfg.right][i]:
+    if cfg.do_stab:
+        inputs = []
+        inputs_str = []
+        for k, input in enumerate((cfg.left, cfg.right)[cfg.stab_channel]):
             command.extend(['-i', input])
-            all_inputs[i].append(k)
-            k += 1
+            inputs.append(k)
+            inputs_str.append(f'{k}:v')
 
-    all_input_str = left_input_str, right_input_str = [[f'{k}:v' for k in inputs] for inputs in (left_inputs, right_inputs)]
+        print(inputs)
 
-    print(all_inputs)
+        filters = []
 
-    all_filters = left_filters, right_filters = [], []
-    all_outputs = left_outputs, right_outputs = ['left_raw'], ['right_raw']
-    for i in range(2):
-        all_filters[i].append(Filter('concat', n=len(all_inputs[i]), v=1, a=0))
+        filters.append(Filter('concat', n=len(inputs), v=1, a=0))
+
         offset = cfg.trim
-        if cut_index == i:
+        if cut_index == cfg.stab_channel:
             offset += time_diff
         if offset > 0.0:
             if cfg.ultra_sync:
                 new_fps = fps * cfg.ultra_sync
-                # all_filters[i].append(Filter('minterpolate', fps=new_fps, mi_mode='mci'))
-                all_filters[i].append(Filter('framerate', fps=new_fps))
-            all_filters[i].extend([Filter('trim', start=offset), Filter('setpts', f'PTS-STARTPTS')])
+                # filters.append(Filter('minterpolate', fps=new_fps, mi_mode='mci'))
+                filters.append(Filter('framerate', fps=new_fps))
+            filters.extend([Filter('trim', start=offset), Filter('setpts', f'PTS-STARTPTS')])
             if cfg.ultra_sync:
-                # all_filters[i].append(Filter('minterpolate', fps=fps))
-                all_filters[i].append(Filter('framerate', fps=fps))
+                # filters.append(Filter('minterpolate', fps=fps))
+                filters.append(Filter('framerate', fps=fps))
 
         if cfg.fill_end:
-            if duration == durations[i]:
-                all_filters[i].append(Filter('split'))
-                all_outputs[i].append('filler_raw')
-            else:
-                all_input_str[i].append('filler')
-                all_filters[i][0].kw_params['n'] += 1
+            ...
 
-    v360 = Filter('v360', 'fisheye', 'e', 'lanc', iv_fov=cfg.iv_fov, ih_fov=cfg.ih_fov, h_fov=O_FOV, v_fov=O_FOV, alpha_mask=1, w=SIDE, h=SIDE)
-    filters = [Filter(filter_str) for filter_str in cfg.extra_video_filter] + [v360]
+        filters.append(Filter('trim', duration=duration))
+        filters.append(vsd := Filter('vidstabdetect', result=out, fileformat='ascii'))
+        if cfg.stab_args:
+            vsd.add_raw(cfg.stab_args)
 
-    filter_seqs = [
-        FilterSeq(left_input_str, left_outputs, left_filters),
-        FilterSeq(right_input_str, right_outputs, right_filters),
-    ]
-    if cfg.fill_end:
-        filter_seqs.insert(1, FilterSeq(['filler_raw'], ['filler'], [
-            Filter('trim', start=min(durations)),
-            Filter('setpts', f'PTS-STARTPTS'),
-        ]))
-        if duration == durations[1]:
-            filter_seqs.reverse()
-    filter_seqs.extend([
-        FilterSeq(['left_raw'], ['left'], filters),
-        FilterSeq(['right_raw'], ['right'], filters),
-        FilterSeq(['left', 'right'], ['overlay'], [Filter('hstack', inputs=2)]),
-        video_fs := FilterSeq(['0:v', 'overlay'], ['video'], [Filter('overlay')])
-    ])
-    filter_graph = FilterGraph(filter_seqs)
+        command.extend(['-filter_complex', FilterSeq(inputs_str, [], filters).render()])
+        command.extend(['-f', 'null', '-'])
 
-    fade_in = cfg.fade[0]
-    fade_out = cfg.fade[1] if len(cfg.fade) >= 2 else cfg.fade[0]
+    else:
+        command.extend(['-f', 'lavfi', '-i', Filter('color', color='black', s=f'{SIDE * 2}x{SIDE}', r=fps).render()])
 
-    if fade_in:
-        video_fs.filters.append(Filter('fade', t='in', st=0, d=fade_in))
-    if fade_out:
-        video_fs.filters.append(Filter('fade', t='out', st=duration - fade_out, d=fade_out))
-    video_fs.filters.append(Filter('trim', duration=duration))
+        all_inputs = (left_inputs, right_inputs) = [], []
+        k = 1
+        for i in range(2):
+            for input in (cfg.left, cfg.right)[i]:
+                command.extend(['-i', input])
+                all_inputs[i].append(k)
+                k += 1
 
-    if cfg.do_audio:
-        audio_inputs = [f'{i}:a' for i in ([left_inputs, right_inputs][cfg.audio])]
-        audio_filters = [Filter('concat', n=len(audio_inputs), v=0, a=1)]
-        offset = cfg.trim
-        if cut_index == cfg.audio:
-            offset += time_diff
-        if offset > 0.0:
-            audio_filters.extend([Filter('atrim', start=offset), Filter('asetpts', f'PTS-STARTPTS')])
+        all_input_str = left_input_str, right_input_str = [[f'{k}:v' for k in inputs] for inputs in (left_inputs, right_inputs)]
+
+        print(all_inputs)
+
+        all_filters = left_filters, right_filters = [], []
+        all_outputs = left_outputs, right_outputs = ['left_raw'], ['right_raw']
+        for i in range(2):
+            all_filters[i].append(Filter('concat', n=len(all_inputs[i]), v=1, a=0))
+            offset = cfg.trim
+            if cut_index == i:
+                offset += time_diff
+            if offset > 0.0:
+                if cfg.ultra_sync:
+                    new_fps = fps * cfg.ultra_sync
+                    # all_filters[i].append(Filter('minterpolate', fps=new_fps, mi_mode='mci'))
+                    all_filters[i].append(Filter('framerate', fps=new_fps))
+                all_filters[i].extend([Filter('trim', start=offset), Filter('setpts', f'PTS-STARTPTS')])
+                if cfg.ultra_sync:
+                    # all_filters[i].append(Filter('minterpolate', fps=fps))
+                    all_filters[i].append(Filter('framerate', fps=fps))
+
+            if cfg.fill_end:
+                if duration == durations[i]:
+                    all_filters[i].append(Filter('split'))
+                    all_outputs[i].append('filler_raw')
+                else:
+                    all_input_str[i].append('filler')
+                    all_filters[i][0].kw_params['n'] += 1
+
+        v360 = Filter('v360', 'fisheye', 'e', 'lanc', iv_fov=cfg.iv_fov, ih_fov=cfg.ih_fov, h_fov=O_FOV, v_fov=O_FOV, alpha_mask=1, w=SIDE, h=SIDE)
+        filters = [Filter(filter_str) for filter_str in cfg.extra_video_filter] + [v360]
+
+        filter_seqs = [
+            FilterSeq(left_input_str, left_outputs, left_filters),
+            FilterSeq(right_input_str, right_outputs, right_filters),
+        ]
+        if cfg.fill_end:
+            filter_seqs.insert(1, FilterSeq(['filler_raw'], ['filler'], [
+                Filter('trim', start=min(durations)),
+                Filter('setpts', f'PTS-STARTPTS'),
+            ]))
+            if duration == durations[1]:
+                filter_seqs.reverse()
+        filter_seqs.extend([
+            FilterSeq(['left_raw'], ['left'], filters),
+            FilterSeq(['right_raw'], ['right'], filters),
+            FilterSeq(['left', 'right'], ['overlay'], [Filter('hstack', inputs=2)]),
+            video_fs := FilterSeq(['0:v', 'overlay'], ['video'], [Filter('overlay')])
+        ])
+        filter_graph = FilterGraph(filter_seqs)
+
+        fade_in = cfg.fade[0]
+        fade_out = cfg.fade[1] if len(cfg.fade) >= 2 else cfg.fade[0]
 
         if fade_in:
-            audio_filters.append(Filter('afade', t='in', st=0, d=fade_in))
+            video_fs.filters.append(Filter('fade', t='in', st=0, d=fade_in))
         if fade_out:
-            audio_filters.append(Filter('afade', t='out', st=duration - fade_out, d=fade_out))
-        audio_filters.append(Filter('atrim', duration=duration))
-        filter_graph.filter_seqs.append(FilterSeq(audio_inputs, ['audio'], audio_filters))
+            video_fs.filters.append(Filter('fade', t='out', st=duration - fade_out, d=fade_out))
+        video_fs.filters.append(Filter('trim', duration=duration))
 
-    command.extend(['-filter_complex', filter_graph.render()])
+        if cfg.do_audio:
+            audio_inputs = [f'{i}:a' for i in ([left_inputs, right_inputs][cfg.audio])]
+            audio_filters = [Filter('concat', n=len(audio_inputs), v=0, a=1)]
+            offset = cfg.trim
+            if cut_index == cfg.audio:
+                offset += time_diff
+            if offset > 0.0:
+                audio_filters.extend([Filter('atrim', start=offset), Filter('asetpts', f'PTS-STARTPTS')])
 
-    command.extend(['-map', '[video]'])
-    if cfg.do_audio and not cfg.separate_audio:
-        command.extend(['-map', '[audio]'])
-    command.extend(['-c:v', 'hevc_nvenc'])
-    if cfg.bitrate:
-        command.extend(['-vb', cfg.bitrate])
+            if fade_in:
+                audio_filters.append(Filter('afade', t='in', st=0, d=fade_in))
+            if fade_out:
+                audio_filters.append(Filter('afade', t='out', st=duration - fade_out, d=fade_out))
+            audio_filters.append(Filter('atrim', duration=duration))
+            filter_graph.filter_seqs.append(FilterSeq(audio_inputs, ['audio'], audio_filters))
 
-    command.extend(['-preset', cfg.preset])
-    if cfg.do_audio and not cfg.separate_audio:
-        command.extend(['-c:a', 'aac', '-ab', '192k'])
-    command.extend(['-t', fts(duration)])
-    command.extend([out])
+        command.extend(['-filter_complex', filter_graph.render()])
 
-    if cfg.do_audio and cfg.separate_audio:
-        command.extend(['-map', '[audio]'])
-        command.extend(['-c:a', 'pcm_s16le'])
+        command.extend(['-map', '[video]'])
+        if cfg.do_audio and not cfg.separate_audio:
+            command.extend(['-map', '[audio]'])
+        command.extend(['-c:v', 'hevc_nvenc'])
+        if cfg.bitrate:
+            command.extend(['-vb', cfg.bitrate])
+
+        command.extend(['-preset', cfg.preset])
+        if cfg.do_audio and not cfg.separate_audio:
+            command.extend(['-c:a', 'aac', '-ab', '192k'])
         command.extend(['-t', fts(duration)])
-        command.extend([out_wav])
+        command.extend([out])
+
+        if cfg.do_audio and cfg.separate_audio:
+            command.extend(['-map', '[audio]'])
+            command.extend(['-c:a', 'pcm_s16le'])
+            command.extend(['-t', fts(duration)])
+            command.extend([out_wav])
 
     if cfg.print is not None:
         print_command(cfg, command)

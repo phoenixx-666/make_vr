@@ -26,7 +26,7 @@ class Config:
     overwrite: bool
     rename: bool
     ask_match: bool
-    print: bool
+    print: int | None
 
     ih_fov: float
     iv_fov: float
@@ -46,6 +46,10 @@ class Config:
     separate_audio: bool = False
     fill_end: bool = False
     wav_duration: float | None = None
+
+    do_stab: bool = False
+    stab_args: str | None = None
+    stab_channel: int = 0
 
     quality: int = 2
     do_image: bool | None = None
@@ -96,6 +100,10 @@ class Config:
                                     'up to the duration of the longer video')
         arg_group.add_argument('--wav-duration', type=duration, metavar='DURATION',
                                help='Portion of sound to extract from left and right video that will be used in automatic synchronization')
+        arg_group.add_argument('--stab', type=str, metavar='ARGS', nargs='?', const='',
+                               help='Produce the stabilization file instead of video with vidstabdetect filter with optional extra ARGS')
+        arg_group.add_argument('--stab-channel', type=int, metavar='INDEX',
+                               help='Index of the input channel to produce stabilization file from')
 
         arg_group = parser.add_argument_group('Photo options')
         arg_group.add_argument('-q', '--quality', type=int, default=2, help='Output photo quality')
@@ -118,7 +126,7 @@ class Config:
             overwrite=bool(args.overwrite),
             rename=bool(args.rename),
             ask_match=bool(args.ask_match),
-            print=bool(args.print),
+            print=args.print,
 
             ih_fov=args.ihfov,
             iv_fov=args.ivfov,
@@ -137,6 +145,10 @@ class Config:
             separate_audio=args.separate_audio,
             fill_end=args.fill_end,
             wav_duration=args.wav_duration,
+
+            do_stab=(args.stab is not None) or (args.stab_channel is not None),
+            stab_args=args.stab or None,
+            stab_channel=0 if (args.stab_channel is None) else args.stab_channel,
 
             quality=args.quality,
 

@@ -116,6 +116,9 @@ def get_output_filename(cfg: Config) -> str:
         else:
             basename2 = os.path.splitext(os.path.basename(cfg.right[0]))[0]
 
+        if cfg.do_stab:
+            ext = '.trf'
+
         if multiple:
             fn = f'{basename}__{basename2}{ext.lower()}'
         else:

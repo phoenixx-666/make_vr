@@ -18,6 +18,7 @@ class Filter:
         self._name = name
         self.simple_params = simple_params
         self.kw_params = kw_params
+        self.raw_params = []
 
     """
     @staticmethod
@@ -32,24 +33,32 @@ class Filter:
 
     @classmethod
     def _escape_string(cls, s: str) -> str:
-        return cls._escape_re.sub(r'\\$0', s)
+        return cls._escape_re.sub(r'\\\g<0>', s)
 
     @classmethod
-    def _render_param(cls, param: Any) -> str:
+    def _render_param(cls, param: Any, escape=True) -> str:
         if isinstance(param, int):
             return f'{param:d}'
         elif isinstance(param, float):
             return fts(param)
-        elif isinstance(param, str):
+
+        if not isinstance(param, str):
+            param = str(param)
+        if escape:
             return cls._escape_string(param)
-        return cls._escape_string(str(param))
+        else:
+            return param
+
+    def add_raw(self, raw_params: str):
+        self.raw_params.append(raw_params)
 
     def render(self) -> str:
         if not self.simple_params and not self.kw_params:
             return self._name
         simple_params = map(self._render_param, self.simple_params)
         kw_params = (f'{k}={self._render_param(v)}' for k, v in self.kw_params.items())
-        return f'{self._name}={":".join(chain.from_iterable([simple_params, kw_params]))}'
+        raw_params = [self._render_param(param, escape=False) for param in self.raw_params]
+        return f'{self._name}={":".join(chain.from_iterable([simple_params, kw_params, raw_params]))}'
 
 
 @dataclass
