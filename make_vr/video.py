@@ -289,6 +289,7 @@ def make_video(cfg: Config):
                     while len(timestamps) > 1 and (now - timestamps[0][0]).total_seconds() > 10.0:
                         timestamps.popleft()
                     timestamps.append((now, cur_frame))
+                    mul = eta = '?'
                     if len(timestamps) >= 2 and ((time_diff := (now - timestamps[0][0]).total_seconds()) > 0.0):
                         prog_fps = (cur_frame - timestamps[0][1]) / time_diff
                         ratio = float(prog_fps / fps)
@@ -302,10 +303,6 @@ def make_video(cfg: Config):
                             now = datetime.datetime.now(tz)
                             eta_dt = datetime.datetime.now(tz) + datetime.timedelta(seconds=remaining_frames / prog_fps)
                             eta = eta_dt.strftime(time_fmt if eta_dt.date() == now.date() else datetime_fmt)
-                        else:
-                            eta = '?'
-                    else:
-                        mul = eta = '?'
 
                     pbar.set_postfix_str(f't={d_to_hms(float(cur_frame / fps))}, x{mul}, eta={eta}')
                     pbar.update(cur_frame - last_frame)

@@ -152,9 +152,7 @@ def validate_input_files(cfg: Config):
             closest, diff = find_closest(cfg, right[0], left[0])
             right = [closest]
         if closest:
-            if cfg.yes:
-                print(f'Found file "{closest}" with difference of {diff:.3f} seconds.')
-            else:
+            if cfg.ask_match:
                 print(f'Found file "{closest}" with difference of {diff:.3f} seconds. Continue? [Y/n]', end=None)
                 while True:
                     resp = getch()
@@ -168,6 +166,8 @@ def validate_input_files(cfg: Config):
                             break
                     except UnicodeDecodeError:
                         ...
+            else:
+                print(f'Found file "{closest}" with difference of {diff:.3f} seconds.')
 
         else:
             ft = "image" if (do_image := filetype.is_image(left[0] or right[0])) else "video"

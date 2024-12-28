@@ -21,11 +21,12 @@ class Config:
     output: str | None
 
     threads: int
-    get_offset: bool | None
-    yes: bool | None
-    overwrite: bool | None
-    rename: bool | None
-    print: bool | None
+    get_offset: bool
+    yes: bool
+    overwrite: bool
+    rename: bool
+    ask_match: bool
+    print: bool
 
     ih_fov: float
     iv_fov: float
@@ -63,10 +64,11 @@ class Config:
 
         parser.add_argument('-t', '--threads', type=int)
         parser.add_argument('--get-offset', action='store_true', help='Only calculate offset between files based on the audio tracks')
-        parser.add_argument('-y', dest='yes', action='store_true', help='Answer "Yes" to all prompts')
+        parser.add_argument('-y', dest='yes', action='store_true', help='Answer "Yes" to all prompts involving output files')
         mex_group = parser.add_mutually_exclusive_group()
         mex_group.add_argument('-w', '--overwrite', action='store_true', help='Overwrite without prompt if output file already exists')
         mex_group.add_argument('--rename', action='store_true', help='Overwrite without prompt if output file already exists')
+        parser.add_argument('-m', '--ask-match', action='store_true', help='Prompt when automatically finding matching file by date')
         parser.add_argument('-p', '--print', type=int, nargs='?', const=0, metavar='line_width', help='Only print ffmpeg command without executing it')
 
         arg_group = parser.add_argument_group('Camera options')
@@ -76,7 +78,7 @@ class Config:
         arg_group = parser.add_argument_group('Video options')
         arg_group.add_argument('-f', '--fade', type=duration, nargs='+', default=[1.0], help='Add fade effect in the beginning and the end of the video')
         arg_group.add_argument('-a', '--audio', type=int, choices=[-1, 0, 1], default=0, help='Use audio from the video file for the given eye, or -1 for no audio')
-        arg_group.add_argument('-b', '--bitrate', type=str, help='Output video bitrate (Value must be compatible with ffmpeg)')
+        arg_group.add_argument('-b', '--bitrate', type=str, default='40M', help='Output video bitrate (Value must be compatible with ffmpeg)')
         arg_group.add_argument('-d', '--duration', type=duration, help='Maximum duration of the output video [seconds or h:m:s]')
         arg_group.add_argument('--preset', type=str, default='slow', help='Encoding preset (must be suitable for FFMpeg, default: slow)')
         arg_group.add_argument('--offset', type=duration, default=0.0, help='Extra offset for the cut video [seconds or h:m:s]')
@@ -111,11 +113,12 @@ class Config:
             output=args.output,
 
             threads=args.threads,
-            get_offset=args.get_offset,
-            yes=args.yes,
-            overwrite=args.overwrite,
-            rename=args.rename,
-            print=args.print,
+            get_offset=bool(args.get_offset),
+            yes=bool(args.yes),
+            overwrite=bool(args.overwrite),
+            rename=bool(args.rename),
+            ask_match=bool(args.ask_match),
+            print=bool(args.print),
 
             ih_fov=args.ihfov,
             iv_fov=args.ivfov,
