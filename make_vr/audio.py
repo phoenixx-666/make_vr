@@ -34,12 +34,12 @@ def get_wav_samples(cfg: Config, param: str, duration: float) -> tuple[ArrayLike
         command.extend(['-i', fn])
     if len(filenames) > 1:
         filter_graph = FilterGraph([
-            FilterSeq([f'{i}:a' for i in range(len(filenames))], ['out'], [Filter('concat', n=len(filenames), v=0, a=1)])
+            FilterSeq([f'{i}:a:0' for i in range(len(filenames))], ['out'], [Filter('concat', n=len(filenames), v=0, a=1)])
         ])
         command.extend(['-filter_complex', filter_graph.render()])
         command.extend(['-map', '[out]'])
     else:
-        command.extend(['-map', '0:a'])
+        command.extend(['-map', '0:a:0'])
     command.extend(['-vn', '-c:a', 'pcm_s16le',
                     '-t', fts(duration), '-f', 'wav', 'pipe:1'])
     with sp.Popen(command, stdout=sp.PIPE) as proc:

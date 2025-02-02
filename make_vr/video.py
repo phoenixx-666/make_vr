@@ -62,8 +62,13 @@ def get_metadata(metadata: dict[str, Any]) -> Metadata:
     s0md = streams[0]
     timecode = re.split(r'[:;]', (s0md.get('tags', {}).get('timecode', '') or s0md.get('tags', {}).get('TIMECODE', '')))
 
+    try:
+        fps = Fraction(s0md['r_frame_rate'])
+    except ZeroDivisionError:
+        fps = Fraction(0)
+
     return Metadata(
-        fps = Fraction(s0md['r_frame_rate']),
+        fps = fps,
         # timecode = tuple(map(int, timecode)) if timecode[0] else None,
         duration = float(s0md.get('duration', 0)) or sum([60.0 ** i * float(x) for i, x in enumerate(s0md['tags']['DURATION'].split(':')[::-1])])
     )
@@ -141,7 +146,7 @@ def make_video(cfg: Config):
         for k, input in enumerate((cfg.left, cfg.right)[cfg.stab_channel]):
             command.extend(['-i', input])
             inputs.append(k)
-            inputs_str.append(f'{k}:v')
+            inputs_str.append(f'{k}:v:0')
 
         print(inputs)
 
@@ -184,7 +189,7 @@ def make_video(cfg: Config):
                 all_inputs[i].append(k)
                 k += 1
 
-        all_input_str = left_input_str, right_input_str = [[f'{k}:v' for k in inputs] for inputs in (left_inputs, right_inputs)]
+        all_input_str = left_input_str, right_input_str = [[f'{k}:v:0' for k in inputs] for inputs in (left_inputs, right_inputs)]
 
         print(all_inputs)
 
@@ -231,7 +236,7 @@ def make_video(cfg: Config):
             FilterSeq(['left_raw'], ['left'], filters),
             FilterSeq(['right_raw'], ['right'], filters),
             FilterSeq(['left', 'right'], ['overlay'], [Filter('hstack', inputs=2)]),
-            video_fs := FilterSeq(['0:v', 'overlay'], ['video'], [Filter('overlay')])
+            video_fs := FilterSeq(['0:v:0', 'overlay'], ['video'], [Filter('overlay')])
         ])
         filter_graph = FilterGraph(filter_seqs)
 
@@ -245,7 +250,7 @@ def make_video(cfg: Config):
         video_fs.filters.append(Filter('trim', duration=duration))
 
         if cfg.do_audio:
-            audio_inputs = [f'{i}:a' for i in ([left_inputs, right_inputs][cfg.audio])]
+            audio_inputs = [f'{i}:a:0' for i in ([left_inputs, right_inputs][cfg.audio])]
             audio_filters = [Filter('concat', n=len(audio_inputs), v=0, a=1)]
             offset = cfg.trim
             if cut_index == cfg.audio:
