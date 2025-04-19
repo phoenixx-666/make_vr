@@ -34,10 +34,10 @@ def make_image(cfg: Config):
     extra_fitlers = [Filter(filter_str) for filter_str in cfg.extra_video_filter]
     v360 = Filter('v360', 'fisheye', 'e', 'lanc', iv_fov=cfg.iv_fov, ih_fov=cfg.ih_fov, h_fov=O_FOV, v_fov=O_FOV, alpha_mask=1, w=SIDE, h=SIDE)
     filter_complpex = FilterGraph([
-        FilterSeq(['1:v'], ['left'], extra_fitlers + [v360]),
-        FilterSeq(['2:v'], ['right'], extra_fitlers + [v360]),
+        FilterSeq(['1:v:0'], ['left'], extra_fitlers + [v360]),
+        FilterSeq(['2:v:0'], ['right'], extra_fitlers + [v360]),
         FilterSeq(['left', 'right'], ['overlay'], [Filter('hstack', inputs=2)]),
-        FilterSeq(['0:v', 'overlay'], ['photo'], [Filter('overlay')]),
+        FilterSeq(['0:v:0', 'overlay'], ['photo'], [Filter('overlay')]),
     ])
 
     command.extend(['-filter_complex', filter_complpex.render()])
