@@ -53,6 +53,8 @@ def find_closest(cfg: Config, dir: str, reference: str) -> tuple[str | None, flo
     for file in (f for f in next(os.walk(dir))[2] if os.path.splitext(f)[1].lower() == ref_ext):
         fn = os.path.join(dir, file)
         date = get_creation_date(cfg, fn)
+        if not date:
+            continue
         newdiff = abs(date - ref_date).total_seconds()
         if newdiff < diff:
             closest, diff = fn, newdiff

@@ -37,7 +37,12 @@ class Config:
 
     bitrate: str
     duration: float | None
+    video_codec: str
     preset: str
+    pixel_format: str
+    audio_codec: str
+    audio_bitrate: str
+
     extra_offset: float | None
     override_offset: float | None
     trim: float | None
@@ -82,9 +87,17 @@ class Config:
         arg_group = parser.add_argument_group('Video options')
         arg_group.add_argument('-f', '--fade', type=duration, nargs='+', default=[1.0], help='Add fade effect in the beginning and the end of the video')
         arg_group.add_argument('-a', '--audio', type=int, choices=[-1, 0, 1], default=0, help='Use audio from the video file for the given eye, or -1 for no audio')
-        arg_group.add_argument('-b', '--bitrate', type=str, default='40M', help='Output video bitrate (Value must be compatible with ffmpeg)')
         arg_group.add_argument('-d', '--duration', type=duration, help='Maximum duration of the output video [seconds or h:m:s]')
-        arg_group.add_argument('--preset', type=str, default='slow', help='Encoding preset (must be suitable for FFMpeg, default: slow)')
+        arg_group.add_argument('--video-codec', '--vc', type=str, default=(DEFAULT := 'hevc_nvenc'),
+                               help=f'Video codec (must be suitable for FFMpeg, default: {DEFAULT})')
+        arg_group.add_argument('-b', '--bitrate', type=str, default='40M', help='Output video bitrate (Value must be compatible with ffmpeg)')
+        arg_group.add_argument('--preset', type=str, default=(DEFAULT := 'slow'), help=f'Encoding preset (must be suitable for FFMpeg, default: {DEFAULT})')
+        arg_group.add_argument('--pixel-format', '--pf', type=str, default=(DEFAULT := 'yuv420p'),
+                               help=f'Pixel format codec (must be suitable for FFMpeg, default: {DEFAULT})')
+        arg_group.add_argument('--audio-codec', '--ac', type=str, default=(DEFAULT := 'aac'),
+                               help=f'Audio codec (must be suitable for FFMpeg, default: {DEFAULT})')
+        arg_group.add_argument('--audio-bitrate', '--ab', type=str, default=(DEFAULT := '192k'),
+                               help=f'Audio bitrate (must be suitable for FFMpeg, default: {DEFAULT})')
         arg_group.add_argument('--offset', type=duration, default=0.0, help='Extra offset for the cut video [seconds or h:m:s]')
         arg_group.add_argument('--override-offset', nargs=2, metavar=('INPUT', 'OFFSET'), help='Override offset on specified input')
         arg_group.add_argument('--trim', '-T', type=duration, default=0.0, help='Time to trim from the beginning, after the videos are synchronized')
@@ -133,10 +146,14 @@ class Config:
 
             fade=args.fade,
             audio=args.audio,
-            do_audio=args.audio != -1,
-            bitrate=args.bitrate,
             duration=args.duration,
+            do_audio=args.audio != -1,
+            video_codec=args.video_codec,
+            bitrate=args.bitrate,
             preset=args.preset,
+            pixel_format=args.pixel_format,
+            audio_codec=args.audio_codec,
+            audio_bitrate=args.audio_bitrate,
             extra_offset=args.offset,
             override_offset=args.override_offset,
             trim=args.trim,

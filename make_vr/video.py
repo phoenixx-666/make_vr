@@ -270,13 +270,14 @@ def make_video(cfg: Config):
         command.extend(['-map', '[video]'])
         if cfg.do_audio and not cfg.separate_audio:
             command.extend(['-map', '[audio]'])
-        command.extend(['-c:v', 'hevc_nvenc'])
+        command.extend(['-c:v', cfg.video_codec])
         if cfg.bitrate:
             command.extend(['-vb', cfg.bitrate])
+        command.extend(['-pix_fmt', cfg.pixel_format])
 
         command.extend(['-preset', cfg.preset])
         if cfg.do_audio and not cfg.separate_audio:
-            command.extend(['-c:a', 'aac', '-ab', '192k'])
+            command.extend(['-c:a', cfg.audio_codec, '-ab', cfg.audio_bitrate])
         command.extend(['-t', fts(duration)])
         command.extend([out])
 
