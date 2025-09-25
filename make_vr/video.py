@@ -179,14 +179,21 @@ def make_video(cfg: Config):
         command.extend(['-f', 'null', '-'])
 
     else:
+        suffix = ''
         command.extend(['-f', 'lavfi', '-i', Filter('color', color='black', s=f'{SIDE * 2}x{SIDE}', r=fps).render()])
 
         all_inputs = (left_inputs, right_inputs) = [], []
+        audio_inputs = []
         k = 1
         for i in range(2):
             for input in (cfg.left, cfg.right)[i]:
                 command.extend(['-i', input])
                 all_inputs[i].append(k)
+                k += 1
+        if cfg.external_audio:
+            for input in cfg.audio:
+                command.extend(['-i', input])
+                audio_inputs.append(k)
                 k += 1
 
         all_input_str = left_input_str, right_input_str = [[f'{k}:v:0' for k in inputs] for inputs in (left_inputs, right_inputs)]
@@ -194,7 +201,7 @@ def make_video(cfg: Config):
         print(all_inputs)
 
         all_filters = left_filters, right_filters = [], []
-        all_outputs = left_outputs, right_outputs = ['left_raw'], ['right_raw']
+        all_outputs = left_outputs, right_outputs = [f'left_raw{suffix}'], [f'right_raw{suffix}']
         for i in range(2):
             all_filters[i].append(Filter('concat', n=len(all_inputs[i]), v=1, a=0))
             offset = cfg.trim
@@ -213,9 +220,9 @@ def make_video(cfg: Config):
             if cfg.fill_end:
                 if duration == durations[i]:
                     all_filters[i].append(Filter('split'))
-                    all_outputs[i].append('filler_raw')
+                    all_outputs[i].append(f'filler_raw{suffix}')
                 else:
-                    all_input_str[i].append('filler')
+                    all_input_str[i].append(f'filler{suffix}')
                     all_filters[i][0].kw_params['n'] += 1
 
         v360 = Filter('v360', 'fisheye', 'e', 'lanc', iv_fov=cfg.iv_fov, ih_fov=cfg.ih_fov, h_fov=O_FOV, v_fov=O_FOV, alpha_mask=1, w=SIDE, h=SIDE)
@@ -226,17 +233,17 @@ def make_video(cfg: Config):
             FilterSeq(right_input_str, right_outputs, right_filters),
         ]
         if cfg.fill_end:
-            filter_seqs.insert(1, FilterSeq(['filler_raw'], ['filler'], [
+            filter_seqs.insert(1, FilterSeq([f'filler_raw{suffix}'], [f'filler{suffix}'], [
                 Filter('trim', start=min(durations)),
                 Filter('setpts', f'PTS-STARTPTS'),
             ]))
             if duration == durations[1]:
                 filter_seqs.reverse()
         filter_seqs.extend([
-            FilterSeq(['left_raw'], ['left'], filters),
-            FilterSeq(['right_raw'], ['right'], filters),
-            FilterSeq(['left', 'right'], ['overlay'], [Filter('hstack', inputs=2)]),
-            video_fs := FilterSeq(['0:v:0', 'overlay'], ['video'], [Filter('overlay')])
+            FilterSeq([f'left_raw{suffix}'], [f'left{suffix}'], filters),
+            FilterSeq([f'right_raw{suffix}'], [f'right{suffix}'], filters),
+            FilterSeq([f'left{suffix}', f'right{suffix}'], [f'overlay{suffix}'], [Filter('hstack', inputs=2)]),
+            video_fs := FilterSeq(['0:v:0', f'overlay{suffix}'], [f'video{suffix}'], [Filter(f'overlay{suffix}')])
         ])
         filter_graph = FilterGraph(filter_seqs)
 
@@ -250,10 +257,10 @@ def make_video(cfg: Config):
         video_fs.filters.append(Filter('trim', duration=duration))
 
         if cfg.do_audio:
-            audio_inputs = [f'{i}:a:0' for i in ([left_inputs, right_inputs][cfg.audio])]
-            audio_filters = [Filter('concat', n=len(audio_inputs), v=0, a=1)]
+            audio_inputs = [f'{i}:a:0' for i in (audio_inputs if cfg.external_audio else [left_inputs, right_inputs][cfg.channel])]
+            audio_filters = [Filter(filter_str) for filter_str in cfg.extra_audio_filter] + [Filter('concat', n=len(audio_inputs), v=0, a=1)]
             offset = cfg.trim
-            if cut_index == cfg.audio:
+            if cut_index == cfg.channel:
                 offset += time_diff
             if offset > 0.0:
                 audio_filters.extend([Filter('atrim', start=offset), Filter('asetpts', f'PTS-STARTPTS')])
@@ -263,13 +270,13 @@ def make_video(cfg: Config):
             if fade_out:
                 audio_filters.append(Filter('afade', t='out', st=duration - fade_out, d=fade_out))
             audio_filters.append(Filter('atrim', duration=duration))
-            filter_graph.filter_seqs.append(FilterSeq(audio_inputs, ['audio'], audio_filters))
+            filter_graph.filter_seqs.append(FilterSeq(audio_inputs, [f'audio{suffix}'], audio_filters))
 
         command.extend(['-filter_complex', filter_graph.render()])
 
-        command.extend(['-map', '[video]'])
+        command.extend(['-map', f'[video{suffix}]'])
         if cfg.do_audio and not cfg.separate_audio:
-            command.extend(['-map', '[audio]'])
+            command.extend(['-map', f'[audio{suffix}]'])
         command.extend(['-c:v', cfg.video_codec])
         if cfg.bitrate:
             command.extend(['-vb', cfg.bitrate])
@@ -282,7 +289,7 @@ def make_video(cfg: Config):
         command.extend([out])
 
         if cfg.do_audio and cfg.separate_audio:
-            command.extend(['-map', '[audio]'])
+            command.extend(['-map', f'[audio{suffix}]'])
             command.extend(['-c:a', 'pcm_s16le'])
             command.extend(['-t', fts(duration)])
             command.extend([out_wav])

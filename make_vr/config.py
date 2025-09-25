@@ -18,7 +18,10 @@ def duration(s: str | float | int) -> float:
 class Config:
     left: str | list[str]
     right: str | list[str]
+    audio: str | list[str]
     output: str | None
+
+    external_audio: bool
 
     threads: int
     get_offset: bool
@@ -32,7 +35,7 @@ class Config:
     iv_fov: float
 
     fade: list[float]
-    audio: int
+    channel: int
     do_audio: bool
 
     bitrate: str
@@ -48,6 +51,7 @@ class Config:
     trim: float | None
     ultra_sync: int | None
     extra_video_filter: list[str] = field(default_factory=list)
+    extra_audio_filter: list[str] = field(default_factory=list)
     separate_audio: bool = False
     fill_end: bool = False
     wav_duration: float | None = None
@@ -69,6 +73,7 @@ class Config:
         parser.description = 'VR Video maker designed for processing GoPro fisheye videos'
         parser.add_argument('-l', '--left', type=str, nargs='+', metavar='path', required=True)
         parser.add_argument('-r', '--right', type=str, nargs='+', metavar='path', required=True)
+        parser.add_argument('-a', '--audio', type=str, nargs='+', metavar='path', help='')
         parser.add_argument('-o', '--output', type=str, metavar='path')
 
         parser.add_argument('-t', '--threads', type=int)
@@ -86,7 +91,7 @@ class Config:
 
         arg_group = parser.add_argument_group('Video options')
         arg_group.add_argument('-f', '--fade', type=duration, nargs='+', default=[1.0], help='Add fade effect in the beginning and the end of the video')
-        arg_group.add_argument('-a', '--audio', type=int, choices=[-1, 0, 1], default=0, help='Use audio from the video file for the given eye, or -1 for no audio')
+        arg_group.add_argument('-c', '--channel', type=int, choices=[-1, 0, 1], default=0, help='Use audio from the video file for the given eye, or -1 for no audio')
         arg_group.add_argument('-d', '--duration', type=duration, help='Maximum duration of the output video [seconds or h:m:s]')
         arg_group.add_argument('--video-codec', '--vc', type=str, default=(DEFAULT := 'hevc_nvenc'),
                                help=f'Video codec (must be suitable for FFMpeg, default: {DEFAULT})')
@@ -104,8 +109,9 @@ class Config:
         arg_group.add_argument('--ultra-sync', '-u', type=int, nargs='?', const=_DEFAULT_USYNC,
                                 help=f'Apply extra synchronization by multiplying FPS by given number [default: {_DEFAULT_USYNC}], '
                                      'with interpolation and then lowering FPS back after trimming')
-        arg_group.add_argument('--extra-video-filter', '-F', type=str, nargs='+', metavar='filter',
+        arg_group.add_argument('--video-filter', '-F', type=str, nargs='+', metavar='filter',
                                 help='Custom video filters, applied before conversion from fisheye to equirectangular')
+        arg_group.add_argument('--audio-filter', '--af', type=str, nargs='+', metavar='filter', help='Custom audio filters')
         arg_group.add_argument('--separate-audio', '-A', action='store_true', help='Store audio as a separate wav file for further editing')
         arg_group.add_argument('--fill-end', action='store_true',
                                help='If two videos are of unequal length after synchronization, '
@@ -131,6 +137,7 @@ class Config:
         return Config(
             left=args.left,
             right=args.right,
+            audio=args.audio,
             output=args.output,
 
             threads=args.threads,
@@ -141,11 +148,13 @@ class Config:
             ask_match=bool(args.ask_match),
             print=args.print,
 
+            external_audio=args.audio is not None,
+
             ih_fov=args.ihfov,
             iv_fov=args.ivfov,
 
             fade=args.fade,
-            audio=args.audio,
+            channel=args.channel,
             duration=args.duration,
             do_audio=args.audio != -1,
             video_codec=args.video_codec,
@@ -158,7 +167,8 @@ class Config:
             override_offset=args.override_offset,
             trim=args.trim,
             ultra_sync=args.ultra_sync,
-            extra_video_filter=args.extra_video_filter or [],
+            extra_video_filter=args.video_filter or [],
+            extra_audio_filter=args.audio_filter or [],
             separate_audio=args.separate_audio,
             fill_end=args.fill_end,
             wav_duration=args.wav_duration,
