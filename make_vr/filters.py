@@ -1,6 +1,7 @@
 from dataclasses import dataclass, field
 from itertools import chain
 import re
+import shlex
 from typing import Any
 
 
@@ -70,12 +71,27 @@ class FilterSeq:
     def render(self) -> str:
         inputs = (f'[{input}]' for input in self.inputs)
         outputs = (f'[{output}]' for output in self.outputs)
-        return f'{"".join(inputs)}{",".join(map(Filter.render, self.filters))}{"".join(outputs)}'
+        rendered_filters = map(Filter.render, self.filters)
+        return f'{"".join(inputs)}{",".join(rendered_filters)}{"".join(outputs)}'
 
 
 @dataclass
 class FilterGraph:
     filter_seqs: list[FilterSeq]
 
-    def render(self) -> str:
+    def render(self, for_print=False) -> str:
+        if for_print:
+            return self._render_for_print()
+        else:
+            return self._render_for_exec()
+
+    def _render_for_print(self) -> str:
+        def format(filter_seq: str) -> str:
+            return f'  {filter_seq}'
+
+        rendered_seqs = map(FilterSeq.render, self.filter_seqs)
+        formatted_seqs = map(format, rendered_seqs)
+        return "'\n" + ',\n'.join(formatted_seqs) + "\n'"
+
+    def _render_for_exec(self) -> str:
         return ','.join(map(FilterSeq.render, self.filter_seqs))

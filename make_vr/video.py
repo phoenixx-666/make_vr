@@ -136,7 +136,8 @@ def make_video(cfg: Config):
     command = [cfg.ffmpeg_path]
     if cfg.threads:
         command.extend(['-threads', str(cfg.threads)])
-    command.extend(['-y'])
+    if cfg.overwrite or not cfg.do_print:
+        command.extend(['-y'])
 
     fps = metadata[0][0].fps
 
@@ -272,9 +273,13 @@ def make_video(cfg: Config):
             audio_filters.append(Filter('atrim', duration=duration))
             filter_graph.filter_seqs.append(FilterSeq(audio_inputs, [f'audio{suffix}'], audio_filters))
 
-        command.extend(['-filter_complex', filter_graph.render()])
+        command.extend(['-filter_complex'])
 
-        command.extend(['-map', f'[video{suffix}]'])
+        part1 = command
+
+        fg = filter_graph.render(cfg.do_print)
+
+        command = ['-map', f'[video{suffix}]']
         if cfg.do_audio and not cfg.separate_audio:
             command.extend(['-map', f'[audio{suffix}]'])
         command.extend(['-c:v', cfg.video_codec])
@@ -294,8 +299,11 @@ def make_video(cfg: Config):
             command.extend(['-t', fts(duration)])
             command.extend([out_wav])
 
-    if cfg.print is not None:
-        print_command(cfg, command)
+        part2 = command
+        command = part1 + [fg] + part2
+
+    if cfg.do_print:
+        print_command(cfg, part1, fg, part2)
 
     num_frames = round(float(duration * fps))
     print(f'num_frames={num_frames}')

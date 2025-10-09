@@ -30,6 +30,7 @@ class Config:
     rename: bool
     ask_match: bool
     print: int | None
+    do_print: bool
 
     ih_fov: float
     iv_fov: float
@@ -147,6 +148,7 @@ class Config:
             rename=bool(args.rename),
             ask_match=bool(args.ask_match),
             print=args.print,
+            do_print=args.print is not None,
 
             external_audio=args.audio is not None,
 
