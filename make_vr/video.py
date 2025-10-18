@@ -92,7 +92,7 @@ def make_video(cfg: Config):
     if cfg.do_audio and cfg.separate_audio:
         out_wav = resolve_existing(cfg, swap_extension(out, 'wav'))
 
-    probe_ = lambda fn: probe(cfg, fn)
+    probe_ = lambda fn: probe(cfg.ffprobe_path, fn)
     metadata = [list(map(get_metadata, map(probe_, inputs)))
                 for inputs in (left, right)]
     if cfg.override_offset:
@@ -102,7 +102,8 @@ def make_video(cfg: Config):
         if cfg.wav_duration is not None:
             wav_duration = cfg.wav_duration
         else:
-            wav_duration = abs(sum(map(lambda m: m.duration, metadata[0])) - sum(map(lambda m: m.duration, metadata[1]))) + 60.0
+            wav_duration = abs(sum(map(lambda m: m.duration, metadata[0])) -
+                               sum(map(lambda m: m.duration, metadata[1]))) + 60.0
         print(f'wav_duration={d_to_hms(wav_duration)} ({fts(wav_duration)} s)')
         left_a, rate = get_wav_samples(cfg, 'left', wav_duration)
         right_a, _ = get_wav_samples(cfg, 'right', wav_duration)
@@ -303,7 +304,7 @@ def make_video(cfg: Config):
         command = part1 + [fg] + part2
 
     if cfg.do_print:
-        print_command(cfg, part1, fg, part2)
+        print_command(part1, fg, part2)
 
     num_frames = round(float(duration * fps))
     print(f'num_frames={num_frames}')

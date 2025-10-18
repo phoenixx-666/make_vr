@@ -1,6 +1,8 @@
 import argparse
 from dataclasses import dataclass, field
 
+from .fs import validate_input_files
+
 
 __all__ = ['Config', 'duration']
 
@@ -16,13 +18,6 @@ def duration(s: str | float | int) -> float:
 
 @dataclass
 class Config:
-    left: str | list[str]
-    right: str | list[str]
-    audio: str | list[str]
-    output: str | None
-
-    external_audio: bool
-
     threads: int
     get_offset: bool
     yes: bool
@@ -32,34 +27,12 @@ class Config:
     print: int | None
     do_print: bool
 
-    ih_fov: float
-    iv_fov: float
-
-    fade: list[float]
-    channel: int
-    do_audio: bool
-
     bitrate: str
-    duration: float | None
     video_codec: str
     preset: str
     pixel_format: str
     audio_codec: str
     audio_bitrate: str
-
-    extra_offset: float | None
-    override_offset: float | None
-    trim: float | None
-    ultra_sync: int | None
-    extra_video_filter: list[str] = field(default_factory=list)
-    extra_audio_filter: list[str] = field(default_factory=list)
-    separate_audio: bool = False
-    fill_end: bool = False
-    wav_duration: float | None = None
-
-    do_stab: bool = False
-    stab_args: str | None = None
-    stab_channel: int = 0
 
     quality: int = 2
     do_image: bool | None = None
@@ -68,13 +41,119 @@ class Config:
     ffprobe_path: str = ''
     ffmpeg_verbose: bool = False
 
+    @dataclass
+    class Segment:
+        left: str | list[str]
+        right: str | list[str]
+        audio: str | list[str]
+
+        external_audio: bool
+
+        duration: float | None
+
+        ih_fov: float
+        iv_fov: float
+
+        fade: list[float]
+        channel: int
+        do_audio: bool
+
+        extra_offset: float | None
+        override_offset: float | None
+        trim: float | None
+        ultra_sync: int | None
+        extra_video_filter: list[str] = field(default_factory=list)
+        extra_audio_filter: list[str] = field(default_factory=list)
+        fill_end: bool = False
+        wav_duration: float | None = None
+
+        stab_args: str | None = None
+        stab_channel: int = 0
+
+    segments: list[Segment] = field(default_factory=list)
+    output: str | None = None
+    separate_audio: bool = False
+    do_stab: bool = False
+
+    @classmethod
+    def from_args(cls) -> 'Config':
+        parser = cls._make_parser()
+        args = parser.parse_args()
+
+        do_image, left, right = validate_input_files(args.ffprobe_path, args.left, args.right, args.audio, args.ask_match)
+
+        segments = [
+            cls.Segment(
+                left=left[i],
+                right=right[i],
+                audio=args.audio, #!!!!!!!!!!!!!!
+
+                external_audio=args.audio is not None,
+
+                duration=args.duration,
+
+                ih_fov=args.ihfov,
+                iv_fov=args.ivfov,
+
+                fade=args.fade,
+                channel=args.channel,
+                do_audio=args.audio != -1,
+
+                extra_offset=args.offset,
+                override_offset=args.override_offset,
+                trim=args.trim,
+                ultra_sync=args.ultra_sync,
+                extra_video_filter=args.video_filter or [],
+                extra_audio_filter=args.audio_filter or [],
+                fill_end=args.fill_end,
+                wav_duration=args.wav_duration,
+
+                stab_args=args.stab or None,
+                stab_channel=0 if (args.stab_channel is None) else args.stab_channel,
+            )
+            for i in range(len(left))
+        ]
+
+        return Config(
+            threads=args.threads,
+            get_offset=bool(args.get_offset),
+            yes=bool(args.yes),
+            overwrite=bool(args.overwrite),
+            rename=bool(args.rename),
+            ask_match=bool(args.ask_match),
+            print=args.print,
+            do_print=args.print is not None,
+
+            bitrate=args.bitrate,
+            video_codec=args.video_codec,
+            preset=args.preset,
+            pixel_format=args.pixel_format,
+            audio_codec=args.audio_codec,
+            audio_bitrate=args.audio_bitrate,
+
+            segments=segments,
+            output=args.output,
+
+            separate_audio=args.separate_audio,
+
+            do_stab=(args.stab is not None) or (args.stab_channel is not None),
+
+            quality=args.quality,
+            do_image=do_image,
+
+            ffmpeg_path=args.ffmpeg_path,
+            ffprobe_path=args.ffprobe_path,
+            ffmpeg_verbose=args.ffmpeg_print,
+        )
+
     @staticmethod
-    def from_args() -> 'Config':
+    def _make_parser() -> argparse.ArgumentParser:
         parser = argparse.ArgumentParser()
+
         parser.description = 'VR Video maker designed for processing GoPro fisheye videos'
-        parser.add_argument('-l', '--left', type=str, nargs='+', metavar='path', required=True)
-        parser.add_argument('-r', '--right', type=str, nargs='+', metavar='path', required=True)
-        parser.add_argument('-a', '--audio', type=str, nargs='+', metavar='path', help='')
+        parser.add_argument('-l', '--left', action='append', type=str, nargs='+', metavar='path', required=True)
+        parser.add_argument('-r', '--right', action='append', type=str, nargs='+', metavar='path', required=True)
+        parser.add_argument('-a', '--audio', action='append', type=str, nargs='+', metavar='path', help='')
         parser.add_argument('-o', '--output', type=str, metavar='path')
 
         parser.add_argument('-t', '--threads', type=int)
@@ -133,55 +212,4 @@ class Config:
         arg_group.add_argument('--ffprobe-path', type=str, default='ffprobe', help='Path to the ffprobe executable')
         arg_group.add_argument('--ffmpeg-print', '-P', action='store_true', help='Print all ffmpeg output')
 
-        args = parser.parse_args()
-
-        return Config(
-            left=args.left,
-            right=args.right,
-            audio=args.audio,
-            output=args.output,
-
-            threads=args.threads,
-            get_offset=bool(args.get_offset),
-            yes=bool(args.yes),
-            overwrite=bool(args.overwrite),
-            rename=bool(args.rename),
-            ask_match=bool(args.ask_match),
-            print=args.print,
-            do_print=args.print is not None,
-
-            external_audio=args.audio is not None,
-
-            ih_fov=args.ihfov,
-            iv_fov=args.ivfov,
-
-            fade=args.fade,
-            channel=args.channel,
-            duration=args.duration,
-            do_audio=args.audio != -1,
-            video_codec=args.video_codec,
-            bitrate=args.bitrate,
-            preset=args.preset,
-            pixel_format=args.pixel_format,
-            audio_codec=args.audio_codec,
-            audio_bitrate=args.audio_bitrate,
-            extra_offset=args.offset,
-            override_offset=args.override_offset,
-            trim=args.trim,
-            ultra_sync=args.ultra_sync,
-            extra_video_filter=args.video_filter or [],
-            extra_audio_filter=args.audio_filter or [],
-            separate_audio=args.separate_audio,
-            fill_end=args.fill_end,
-            wav_duration=args.wav_duration,
-
-            do_stab=(args.stab is not None) or (args.stab_channel is not None),
-            stab_args=args.stab or None,
-            stab_channel=0 if (args.stab_channel is None) else args.stab_channel,
-
-            quality=args.quality,
-
-            ffmpeg_path=args.ffmpeg_path,
-            ffprobe_path=args.ffprobe_path,
-            ffmpeg_verbose=args.ffmpeg_print,
-        )
+        return parser

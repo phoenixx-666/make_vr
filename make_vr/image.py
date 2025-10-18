@@ -5,7 +5,7 @@ import subprocess as sp
 from .config import Config
 from .filters import Filter, FilterSeq, FilterGraph
 from .fs import get_output_filename
-from .shell import print_command
+from .shell import print_command, terminate
 
 
 __all__ = ['make_image']
@@ -17,8 +17,7 @@ O_FOV = 180
 
 def make_image(cfg: Config):
     if len(cfg.left) > 1 or len(cfg.right) > 1:
-        print(f'Photo must have only one input for each eye')
-        exit(1)
+        terminate('Photo must have only one input for each eye')
 
     left, right = cfg.left[0], cfg.right[0]
     out = get_output_filename(cfg)
@@ -48,6 +47,6 @@ def make_image(cfg: Config):
     command.extend([out])
 
     if cfg.print is not None:
-        print_command(cfg, command)
+        print_command(command)
 
     sp.run(command, shell=True)
