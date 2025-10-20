@@ -80,7 +80,10 @@ class Config:
         parser = cls._make_parser()
         args = parser.parse_args()
 
-        do_image, left, right = validate_input_files(args.ffprobe_path, args.left, args.right, args.audio, args.ask_match)
+        do_stab = (args.stab is not None) or (args.stab_channel is not None)
+        do_image, left, right = validate_input_files(args.ffprobe_path,
+                                                     args.left, args.right, args.audio,
+                                                     args.ask_match, do_stab)
 
         segments = [
             cls.Segment(
@@ -136,7 +139,7 @@ class Config:
 
             separate_audio=args.separate_audio,
 
-            do_stab=(args.stab is not None) or (args.stab_channel is not None),
+            do_stab=do_stab,
 
             quality=args.quality,
             do_image=do_image,

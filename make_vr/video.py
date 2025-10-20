@@ -85,6 +85,77 @@ def make_video(cfg: Config):
         datetime_fmt = '%d %b %Y %H:%M:%S UTC'
         time_fmt = '%H:%M:%S UTC'
 
+    probe_ = lambda fn: probe(cfg.ffprobe_path, fn)
+
+    out = get_output_filename(cfg)
+
+    if any(segment.do_audio for segment in cfg.segments) and cfg.separate_audio:
+        out_wav = resolve_existing(cfg, swap_extension(out, 'wav'))
+
+    segments = cfg.segments
+    for segment_index, segment in enumerate(segments, start=1):
+
+        left = segment.left
+        right = segment.right
+
+        metadata = [list(map(get_metadata, map(probe_, files))) for files in (left, right)]
+
+        if len(segments) > 1:
+            print(f'================ SEGMENT {segment_index} ================')
+
+        if segment.override_offset:
+            cut_index = int(segment.override_offset[0])
+            time_diff = duration(segment.override_offset[1])
+        else:
+            if segment.wav_duration is not None:
+                wav_duration = segment.wav_duration
+            else:
+                wav_duration = abs(sum(map(lambda m: m.duration, metadata[0])) -
+                                sum(map(lambda m: m.duration, metadata[1]))) + 60.0
+            print(f'wav_duration={d_to_hms(wav_duration)} ({fts(wav_duration)} s)')
+            left_a, rate = get_wav_samples(cfg, segment, 'left', wav_duration)
+            right_a, _ = get_wav_samples(cfg, segment, 'right', wav_duration)
+            time_diff = find_offset(left_a, right_a, rate)
+            if time_diff < 0.0:
+                time_diff = -time_diff
+                cut_index = 0
+            elif time_diff > 0.0:
+                cut_index = 1
+            else:
+                cut_index = -1
+            if cfg.get_offset:
+                print(f'Offset is {d_to_hms(time_diff)} (({fts(time_diff)} s), {cut_index})')
+                exit()
+
+        if segment.extra_offset:
+            time_diff += segment.extra_offset
+
+        durations = tuple(sum(m.duration for m in metadatas) - segment.trim - (time_diff if i == cut_index else 0)
+                        for i, metadatas in enumerate(metadata))
+        duration = (max if segment.fill_end else min)(durations)
+        if segment.duration and segment.duration < duration:
+            duration = segment.duration
+            if segment.fill_end and duration <= min(durations):
+                segment.fill_end = False
+
+        print(f'time_diff={d_to_hms(time_diff)} ({fts(time_diff)} s)')
+        print(f'cut_index={cut_index:d}')
+        print(f'duration={d_to_hms(duration)} ({fts(duration)} s)')
+
+
+
+
+def make_video2(cfg: Config):
+    try:
+        import tzlocal
+        tz = tzlocal.get_localzone()
+        datetime_fmt = '%d %b %Y %H:%M:%S'
+        time_fmt = '%H:%M:%S'
+    except ImportError:
+        tz = datetime.timezone.utc
+        datetime_fmt = '%d %b %Y %H:%M:%S UTC'
+        time_fmt = '%H:%M:%S UTC'
+
     left = cfg.left
     right = cfg.right
     out = get_output_filename(cfg)

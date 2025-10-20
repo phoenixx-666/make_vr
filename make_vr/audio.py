@@ -23,9 +23,9 @@ def _read_audio(file: IO) -> tuple[ArrayLike, int]:
     return data, rate
 
 
-def get_wav_samples(cfg: Config, param: str, duration: float) -> tuple[ArrayLike, int]:
+def get_wav_samples(cfg: Config, segment: Config.Segment, param: str, duration: float) -> tuple[ArrayLike, int]:
     print(f'Getting wav samples from {param} eye video...', end='')
-    filenames = getattr(cfg, param)
+    filenames = getattr(segment, param)
     command = [cfg.ffmpeg_path]
     if cfg.threads:
          command.extend(['-threads', str(cfg.threads)])

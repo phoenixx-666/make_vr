@@ -113,9 +113,9 @@ def get_output_filename(cfg: 'Config') -> str:
         if cfg.do_stab:
             ext = '.trf'
 
-        segments = []
+        fn_parts = []
 
-        for left, right in zip(cfg.left, cfg.right):
+        for left, right in ((segment.left, segment.right) for segment in cfg.segments):
             multiple = False
 
             if len(left) > 1:
@@ -132,28 +132,34 @@ def get_output_filename(cfg: 'Config') -> str:
             else:
                 basename2 = os.path.splitext(os.path.basename(right[0]))[0]
 
-            segments.append(f'{basename}{"__" if multiple else "_"}{basename2}')
+            fn_parts.append(f'{basename}{"__" if multiple else "_"}{basename2}')
 
-        fn = f'{"+".join(segments)}{ext.lower()}'
+        fn = f'{"+".join(fn_parts)}{ext.lower()}'
 
     return resolve_existing(cfg, fn)
 
 
-def validate_input_files(ffprobe_path: str, left: list[list[str]], right: list[list[str]], audio: list[list[str]], ask_match: bool):
+def validate_input_files(ffprobe_path: str, left: list[list[str]], right: list[list[str]], audio: list[list[str]], ask_match: bool, do_stab: bool):
     left = [list(map(os.path.normpath, left_segment)) for left_segment in left]
     right = [list(map(os.path.normpath, right_segment)) for right_segment in right]
 
     left_dir = right_dir = False
 
+    if do_stab and not (len(left) == len(right) == 1):
+        terminate('Stabilization estimation should only be performed on single-segment videos')
+
     if len(left) != len(right):
-        if 1 not in (len(left), len(right)):
-            terminate('If multiple segments are specified, the number of input sequences for left and right eye must be equal.\n'
-                      'Or otherwise a single folder specified for the other eye.')
+        # if 1 not in (len(left), len(right)):
+        #     terminate()
 
         left_dir = len(left) == 1 and len(left[0]) == 1 and os.path.isdir(left[0][0])
         right_dir = len(right) == 1 and len(right[0]) == 1 and os.path.isdir(right[0][0])
         if left_dir == right_dir:
-            terminate('If one of the inputs is a directory, it must be single')
+            if left_dir:
+                terminate('If one of the inputs is a directory, it must be single')
+            else:
+                terminate('If multiple segments are specified, the number of input sequences for left and right eye must be equal.\n'
+                          'Or otherwise a single folder specified for the other eye.')
 
         if left_dir:
             left = [left[0].copy() for _ in range(len(right))]
