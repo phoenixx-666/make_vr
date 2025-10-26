@@ -23,8 +23,9 @@ class FFMpegCommand:
         params.extend(self.general_params)
         for input in self.inputs:
             params.extend(input)
-        params.extend([self.filter_complex])
-        params.extend([self.filter_graph.render()])
+        if self.filter_graph is not None:
+            params.extend([self.filter_complex])
+            params.extend([self.filter_graph.render()])
         params.extend(self.codecs_and_outputs)
         return params
 
@@ -42,9 +43,10 @@ class FFMpegCommand:
             buffer.write(shlex.join(input))
             buffer.write(HYPHEN)
             buffer.write(ENDL)
-        buffer.write(INDENT)
-        buffer.write(self.filter_complex)
-        buffer.write(f" '{self.filter_graph.render(True, indent=INDENT * 2)}' ")
+        if self.filter_graph is not None:
+            buffer.write(INDENT)
+            buffer.write(self.filter_complex)
+            buffer.write(f" '{self.filter_graph.render(True, indent=INDENT * 2)}' ")
         buffer.write(shlex.join(self.codecs_and_outputs))
         buffer.write(ENDL)
 

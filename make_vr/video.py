@@ -9,7 +9,7 @@ import pexpect
 import pexpect.popen_spawn
 from tqdm import tqdm
 
-from .audio import get_wav_samples, find_offset
+from .audio import get_samples, find_offset
 from .config import Config
 from .filters import Filter, FilterSeq, FilterGraph, fts
 from .fs import probe, get_output_filename, resolve_existing, swap_extension
@@ -67,7 +67,7 @@ def get_metadata(metadata: dict[str, Any]) -> Metadata:
         return Metadata(
             fps = fps,
             duration = duration,
-            sample_rate=audio_stream['sample_rate'],
+            sample_rate=int(audio_stream['sample_rate']),
             channel_layout=audio_stream['channel_layout'],
         )
     except KeyError as exc:
@@ -108,6 +108,8 @@ def make_video(cfg: Config):
     metadata = [[list(map(get_metadata, map(probe_, files))) for files in inputs]
                  for inputs in ((segment.left, segment.right) for segment in segments)]
     fps = metadata[0][0][0].fps
+    channel_layout = metadata[0][0][0].channel_layout
+    sample_rate = metadata[0][0][0].sample_rate
     total_duration = 0.0
     any_do_audio = any(segment.do_audio for segment in segments)
 
@@ -133,9 +135,9 @@ def make_video(cfg: Config):
                     sum(map(lambda m: m.duration, metadata[segment_index - 1][0])) -
                     sum(map(lambda m: m.duration, metadata[segment_index - 1][1]))) + 60.0
             print(f'wav_duration={d_to_hms(wav_duration)} ({fts(wav_duration)} s)')
-            left_a, rate = get_wav_samples(cfg, segment, 'left', wav_duration)
-            right_a, _ = get_wav_samples(cfg, segment, 'right', wav_duration)
-            time_diff = find_offset(left_a, right_a, rate)
+            left_a = get_samples(cfg, segment, 'left', wav_duration, sample_rate)
+            right_a = get_samples(cfg, segment, 'right', wav_duration, sample_rate)
+            time_diff = find_offset(left_a, right_a, sample_rate)
             if time_diff < 0.0:
                 time_diff = -time_diff
                 cut_index = 0
@@ -299,8 +301,7 @@ def make_video(cfg: Config):
 
             elif any_do_audio:
                 ffmpeg_command.inputs.append(['-f', 'lavfi',  '-i', Filter(
-                    'anullsrc', channel_layout=metadata[0][0][0].channel_layout,
-                                sample_rate=metadata[0][0][0].sample_rate).render()])
+                    'anullsrc', channel_layout=channel_layout, sample_rate=sample_rate).render()])
                 filter_seqs.append(FilterSeq([f'{k}:a:0'], [f'audio{suffix}'], [Filter('atrim', duration=duration)]))
                 k += 1
 

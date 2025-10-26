@@ -2,5 +2,4 @@ exif==1.6.0
 filetype==1.2.0
 numpy==2.0.1
 pexpect==4.9.0
-pydub==0.25.1
 scipy==1.14.0
