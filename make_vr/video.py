@@ -2,10 +2,6 @@ from collections import deque
 from dataclasses import dataclass
 import datetime
 from fractions import Fraction
-import json
-import math
-import re
-import subprocess as sp
 import sys
 from typing import Any
 
@@ -17,7 +13,7 @@ from .audio import get_wav_samples, find_offset
 from .config import Config
 from .filters import Filter, FilterSeq, FilterGraph, fts
 from .fs import probe, get_output_filename, resolve_existing, swap_extension
-from .shell import FFMpegCommand
+from .shell import FFMpegCommand, terminate
 
 
 __all__ = ['make_video']
@@ -30,8 +26,9 @@ O_FOV = 180
 @dataclass
 class Metadata:
     fps: Fraction
-    # timecode: tuple[int, int, int, int] | None
     duration: float
+    sample_rate: int
+    channel_layout: str
 
 
 class PyTaskbarStub:
@@ -58,20 +55,28 @@ def d_to_hms(d: float) -> str:
 
 
 def get_metadata(metadata: dict[str, Any]) -> Metadata:
-    streams = metadata['streams']
-    s0md = streams[0]
-    timecode = re.split(r'[:;]', (s0md.get('tags', {}).get('timecode', '') or s0md.get('tags', {}).get('TIMECODE', '')))
-
     try:
-        fps = Fraction(s0md['r_frame_rate'])
-    except ZeroDivisionError:
-        fps = Fraction(0)
+        streams = metadata['streams']
+        video_stream = next(filter(lambda stream: stream.get('codec_type') == 'video', streams))
+        audio_stream = next(filter(lambda stream: stream.get('codec_type') == 'audio', streams))
 
-    return Metadata(
-        fps = fps,
-        # timecode = tuple(map(int, timecode)) if timecode[0] else None,
-        duration = float(s0md.get('duration', 0)) or sum([60.0 ** i * float(x) for i, x in enumerate(s0md['tags']['DURATION'].split(':')[::-1])])
-    )
+        fps = Fraction(video_stream['r_frame_rate'])
+        duration = float(video_stream.get('duration', 0)) or \
+            sum([60.0 ** i * float(x) for i, x in enumerate(video_stream['tags']['DURATION'].split(':')[::-1])])
+
+        return Metadata(
+            fps = fps,
+            duration = duration,
+            sample_rate=audio_stream['sample_rate'],
+            channel_layout=audio_stream['channel_layout'],
+        )
+    except KeyError as exc:
+        terminate(f'Error reading metadata: lack of key "{exc.args[0]}"')
+    except StopIteration:
+        terminate('Unable to find stream')
+    except ZeroDivisionError:
+        terminate('Incorrect frame rate value')
+
 
 
 def make_video(cfg: Config):
@@ -95,7 +100,7 @@ def make_video(cfg: Config):
     ffmpeg_command = FFMpegCommand(cfg.ffmpeg_path)
     if cfg.threads:
         ffmpeg_command.general_params.extend(['-threads', str(cfg.threads)])
-    if cfg.overwrite or not cfg.do_print: # FIX !!!!!!!!!!!!!!!!!!
+    if cfg.overwrite or not cfg.do_print:
         ffmpeg_command.general_params.extend(['-y'])
 
     segments = cfg.segments
@@ -104,6 +109,7 @@ def make_video(cfg: Config):
                  for inputs in ((segment.left, segment.right) for segment in segments)]
     fps = metadata[0][0][0].fps
     total_duration = 0.0
+    any_do_audio = any(segment.do_audio for segment in segments)
 
     input_index = 0
     filter_seqs = []
@@ -123,8 +129,9 @@ def make_video(cfg: Config):
             if segment.wav_duration is not None:
                 wav_duration = segment.wav_duration
             else:
-                wav_duration = abs(sum(map(lambda m: m.duration, metadata[segment_index - 1][0])) -
-                                sum(map(lambda m: m.duration, metadata[segment_index - 1][0]))) + 60.0
+                wav_duration = abs(
+                    sum(map(lambda m: m.duration, metadata[segment_index - 1][0])) -
+                    sum(map(lambda m: m.duration, metadata[segment_index - 1][1]))) + 60.0
             print(f'wav_duration={d_to_hms(wav_duration)} ({fts(wav_duration)} s)')
             left_a, rate = get_wav_samples(cfg, segment, 'left', wav_duration)
             right_a, _ = get_wav_samples(cfg, segment, 'right', wav_duration)
@@ -265,8 +272,6 @@ def make_video(cfg: Config):
                 video_fs := FilterSeq([f'{input_index}:v:0', f'overlay{suffix}'], [f'video{suffix}'], [Filter('overlay')])
             ])
 
-            input_index = k
-
             fade_in = segment.fade[0]
             fade_out = segment.fade[1] if len(segment.fade) >= 2 else segment.fade[0]
 
@@ -291,8 +296,15 @@ def make_video(cfg: Config):
                     audio_filters.append(Filter('afade', t='out', st=duration - fade_out, d=fade_out))
                 audio_filters.append(Filter('atrim', duration=duration))
                 filter_seqs.append(FilterSeq(audio_inputs, [f'audio{suffix}'], audio_filters))
-            # else: # MULTIPLE SEGMENTS !!!!!!!
-            #   ...
+
+            elif any_do_audio:
+                ffmpeg_command.inputs.append(['-f', 'lavfi',  '-i', Filter(
+                    'anullsrc', channel_layout=metadata[0][0][0].channel_layout,
+                                sample_rate=metadata[0][0][0].sample_rate).render()])
+                filter_seqs.append(FilterSeq([f'{k}:a:0'], [f'audio{suffix}'], [Filter('atrim', duration=duration)]))
+                k += 1
+
+            input_index = k
 
     if len(segments) > 1:
         concat_inputs = []

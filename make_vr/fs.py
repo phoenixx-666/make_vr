@@ -90,6 +90,8 @@ def resolve_existing(cfg: 'Config', fn: str) -> str:
                     elif resp == 'r':
                         fn = rename(fn)
                         break
+                    elif cfg.do_print:
+                        break
                     else:
                         exit()
                 except UnicodeDecodeError:
