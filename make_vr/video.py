@@ -2,6 +2,7 @@ from collections import deque
 from dataclasses import dataclass
 import datetime
 from fractions import Fraction
+import os
 import sys
 from typing import Any
 
@@ -119,7 +120,10 @@ def make_video(cfg: Config):
     for segment_index, segment in enumerate(segments, start=1):
 
         if len(segments) > 1:
-            print(f'================ SEGMENT {segment_index} ================')
+            width = os.get_terminal_size().columns - 1
+            text = f' SEGMENT {segment_index} '
+            width = max(0, width - len(text))
+            print(f'{"=" * (width // 2)}{text}{"=" * (width // 2 + width % 2)}')
 
         left = segment.left
         right = segment.right
