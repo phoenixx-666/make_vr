@@ -79,7 +79,6 @@ def get_metadata(metadata: dict[str, Any]) -> Metadata:
         terminate('Incorrect frame rate value')
 
 
-
 def make_video(cfg: Config):
     try:
         import tzlocal

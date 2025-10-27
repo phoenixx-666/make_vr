@@ -20,7 +20,6 @@ def duration(s: str | float | int) -> float:
 class Config:
     threads: int
     get_offset: bool
-    yes: bool
     overwrite: bool
     rename: bool
     ask_match: bool
@@ -120,8 +119,7 @@ class Config:
         return Config(
             threads=args.threads,
             get_offset=bool(args.get_offset),
-            yes=bool(args.yes),
-            overwrite=bool(args.overwrite),
+            overwrite=bool(args.overwrite or args.yes),
             rename=bool(args.rename),
             ask_match=bool(args.ask_match),
             print=args.print,

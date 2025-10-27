@@ -77,7 +77,7 @@ def resolve_existing(cfg: 'Config', fn: str) -> str:
     if os.path.exists(fn):
         if cfg.rename:
             fn = rename(fn)
-        elif not (cfg.yes or cfg.overwrite):
+        elif not (cfg.do_print or cfg.overwrite):
             print(f'File "{fn}" already exists. Overwrite? [y/N/r]', end=None)
             while True:
                 resp = getch()
@@ -89,8 +89,6 @@ def resolve_existing(cfg: 'Config', fn: str) -> str:
                         break
                     elif resp == 'r':
                         fn = rename(fn)
-                        break
-                    elif cfg.do_print:
                         break
                     else:
                         exit()
@@ -151,9 +149,6 @@ def validate_input_files(ffprobe_path: str, left: list[list[str]], right: list[l
         terminate('Stabilization estimation should only be performed on single-segment videos')
 
     if len(left) != len(right):
-        # if 1 not in (len(left), len(right)):
-        #     terminate()
-
         left_dir = len(left) == 1 and len(left[0]) == 1 and os.path.isdir(left[0][0])
         right_dir = len(right) == 1 and len(right[0]) == 1 and os.path.isdir(right[0][0])
         if left_dir == right_dir:
