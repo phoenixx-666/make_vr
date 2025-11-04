@@ -107,25 +107,29 @@ def make_video(cfg: Config):
 
     metadata = [[list(map(get_metadata, map(probe_, files))) for files in inputs]
                  for inputs in ((segment.left, segment.right) for segment in segments)]
-    fps = metadata[0][0][0].fps
-    channel_layout = metadata[0][0][0].channel_layout
-    sample_rate = metadata[0][0][0].sample_rate
+    fps = (base_metadata := metadata[0][0][0]).fps
+    channel_layout = base_metadata.channel_layout
+    sample_rate = base_metadata.sample_rate
     total_duration = 0.0
     any_do_audio = any(segment.do_audio for segment in segments)
 
     input_index = 0
     filter_seqs = []
 
+    terminal_width = os.get_terminal_size().columns - 1
+
     for segment_index, segment in enumerate(segments, start=1):
 
         if len(segments) > 1:
-            width = os.get_terminal_size().columns - 1
             text = f' SEGMENT {segment_index} '
-            width = max(0, width - len(text))
+            width = max(0, terminal_width - len(text))
             print(f'{"=" * (width // 2)}{text}{"=" * (width // 2 + width % 2)}')
 
         left = segment.left
         right = segment.right
+        seg_md = metadata[segment_index - 1]
+        d_l = sum(map(lambda m: m.duration, seg_md[0]))
+        d_r = sum(map(lambda m: m.duration, seg_md[1]))
 
         if segment.override_offset:
             cut_index = int(segment.override_offset[0])
@@ -134,9 +138,7 @@ def make_video(cfg: Config):
             if segment.wav_duration is not None:
                 wav_duration = segment.wav_duration
             else:
-                wav_duration = abs(
-                    sum(map(lambda m: m.duration, metadata[segment_index - 1][0])) -
-                    sum(map(lambda m: m.duration, metadata[segment_index - 1][1]))) + 60.0
+                wav_duration = abs(d_l - d_r) + 60.0
             print(f'wav_duration={d_to_hms(wav_duration)} ({fts(wav_duration)} s)')
             left_a = get_samples(cfg, segment, 'left', wav_duration, sample_rate)
             right_a = get_samples(cfg, segment, 'right', wav_duration, sample_rate)
@@ -155,8 +157,8 @@ def make_video(cfg: Config):
         if segment.extra_offset:
             time_diff += segment.extra_offset
 
-        durations = tuple(sum(m.duration for m in metadatas) - segment.trim - (time_diff if i == cut_index else 0)
-                        for i, metadatas in enumerate(metadata[segment_index - 1]))
+        durations = tuple(duration - segment.trim - (time_diff if i == cut_index else 0)
+                          for i, duration in (d_l, d_r))
         duration = (max if segment.fill_end else min)(durations)
 
         if segment.duration and segment.duration < duration:
@@ -228,8 +230,8 @@ def make_video(cfg: Config):
 
             all_input_str = left_input_str, right_input_str = [[f'{k}:v:0' for k in inputs] for inputs in (left_inputs, right_inputs)]
 
-            print(all_inputs)
-            print(all_input_str)
+            # print(all_inputs)
+            # print(all_input_str)
 
             all_filters = left_filters, right_filters = [], []
             all_outputs = left_outputs, right_outputs = [f'left_raw{suffix}'], [f'right_raw{suffix}']
@@ -310,7 +312,6 @@ def make_video(cfg: Config):
 
             input_index = k
 
-    if len(segments) > 1:
         concat_inputs = []
         for i in range(1, len(segments) + 1):
             concat_inputs.extend([f'video{i}', f'audio{i}'])
@@ -350,6 +351,7 @@ def make_video(cfg: Config):
 
     num_frames = round(float(total_duration * fps))
     if len(segments) > 1:
+        print('=' * terminal_width)
         print(f'total_duration={d_to_hms(total_duration)} ({fts(total_duration)} s)')
     print(f'num_frames={num_frames}')
     print(f'Output Filename: "{out}"')
