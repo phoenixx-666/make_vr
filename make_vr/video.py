@@ -158,7 +158,7 @@ def make_video(cfg: Config):
             time_diff += segment.extra_offset
 
         durations = tuple(duration - segment.trim - (time_diff if i == cut_index else 0)
-                          for i, duration in (d_l, d_r))
+                          for i, duration in enumerate((d_l, d_r)))
         duration = (max if segment.fill_end else min)(durations)
 
         if segment.duration and segment.duration < duration:
@@ -312,38 +312,42 @@ def make_video(cfg: Config):
 
             input_index = k
 
-        concat_inputs = []
-        for i in range(1, len(segments) + 1):
-            concat_inputs.extend([f'video{i}', f'audio{i}'])
-        filter_seqs.append(FilterSeq(concat_inputs, ['video', 'audio'], [Filter('concat', n=len(segments), v=1, a=1)]))
+            if segment_index > 1 and segment_index == len(segments):
+                concat_inputs = []
+                for i in range(1, segment_index + 1):
+                    concat_inputs.extend([f'video{i}'])
+                    if any_do_audio:
+                        concat_inputs.extend([f'audio{i}'])
+                if any_do_audio:
+                    filter_seqs.append(FilterSeq(concat_inputs, ['video', 'audio'], [Filter('concat', n=len(segments), v=1, a=1)]))
+                else:
+                    filter_seqs.append(FilterSeq(concat_inputs, ['video'], [Filter('concat', n=len(segments), v=1, a=0)]))
 
     ffmpeg_command.filter_graph = FilterGraph(filter_seqs)
     if cfg.do_stab:
-        ffmpeg_command.codecs_and_outputs.extend(['-f', 'null', '-'])
+        ffmpeg_command.outputs.append(FFMpegCommand.Output(outputs=['-f', 'null', '-']))
     else:
-        ffmpeg_command.codecs_and_outputs.extend(['-map', '[video]'])
-        if True: # segment.do_audio and not cfg.separate_audio:
-            ffmpeg_command.codecs_and_outputs.extend(['-map', '[audio]'])
-        ffmpeg_command.codecs_and_outputs.extend(['-c:v', cfg.video_codec])
+        ffmpeg_command.outputs.append(video_output := FFMpegCommand.Output())
+        video_output.mappings.extend(['-map', '[video]'])
+        if any_do_audio and not cfg.separate_audio:
+            video_output.mappings.extend(['-map', '[audio]'])
+        video_output.codecs.extend(['-c:v', cfg.video_codec])
         if cfg.bitrate:
-            ffmpeg_command.codecs_and_outputs.extend(['-vb', cfg.bitrate])
-        ffmpeg_command.codecs_and_outputs.extend(['-pix_fmt', cfg.pixel_format])
+            video_output.codecs.extend(['-vb', cfg.bitrate])
+        video_output.codecs.extend(['-pix_fmt', cfg.pixel_format])
+        video_output.codecs.extend(['-preset', cfg.preset])
 
-        ffmpeg_command.codecs_and_outputs.extend(['-preset', cfg.preset])
-        if True: # cfg.do_audio and not cfg.separate_audio:
-            ffmpeg_command.codecs_and_outputs.extend(['-c:a', cfg.audio_codec, '-ab', cfg.audio_bitrate])
-        ffmpeg_command.codecs_and_outputs.extend(['-t', fts(total_duration)])
-        ffmpeg_command.codecs_and_outputs.extend([out])
+        if any_do_audio and not cfg.separate_audio:
+            video_output.codecs.extend(['-c:a', cfg.audio_codec, '-ab', cfg.audio_bitrate])
+        video_output.outputs.extend(['-t', fts(total_duration)])
+        video_output.outputs.extend([out])
 
-        if False: # cfg.do_audio and cfg.separate_audio:
-            ffmpeg_command.codecs_and_outputs.extend(['-map', f'[audio{suffix}]'])
-            ffmpeg_command.codecs_and_outputs.extend(['-c:a', 'pcm_s16le'])
-            ffmpeg_command.codecs_and_outputs.extend(['-t', fts(total_duration)])
-            ffmpeg_command.codecs_and_outputs.extend([out_wav])
-
-    if cfg.do_print:
-        ffmpeg_command.print()
-        exit()
+        if any_do_audio and cfg.separate_audio:
+            ffmpeg_command.outputs.append(audio_output := FFMpegCommand.Output())
+            audio_output.mappings.extend(['-map', f'[audio]'])
+            audio_output.codecs.extend(['-c:a', 'pcm_s16le'])
+            audio_output.outputs.extend(['-t', fts(total_duration)])
+            audio_output.outputs.extend([out_wav])
 
     # import shlex
     # print(shlex.join(ffmpeg_command.as_list()))
@@ -355,6 +359,11 @@ def make_video(cfg: Config):
         print(f'total_duration={d_to_hms(total_duration)} ({fts(total_duration)} s)')
     print(f'num_frames={num_frames}')
     print(f'Output Filename: "{out}"')
+
+    if cfg.do_print:
+        ffmpeg_command.print()
+        exit()
+
     proc = None
     pbar = None
 

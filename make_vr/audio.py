@@ -24,14 +24,16 @@ def get_samples(cfg: Config, segment: Config.Segment, param: str, duration: floa
     command.general_params.extend(['-hide_banner', '-loglevel', 'warning'])
     for fn in filenames:
         command.inputs.append(['-i', fn])
+    command.outputs.append(output := FFMpegCommand.Output())
     if len(filenames) > 1:
         command.filter_graph = FilterGraph([
             FilterSeq([f'{i}:a:0' for i in range(len(filenames))], ['out'], [Filter('concat', n=len(filenames), v=0, a=1)])
         ])
-        command.codecs_and_outputs.extend(['-map', '[out]'])
+        output.mappings.extend(['-map', '[out]'])
     else:
-        command.codecs_and_outputs.extend(['-map', '0:a:0'])
-    command.codecs_and_outputs.extend(['-vn', '-c:a', 'pcm_s16le', '-ac', '1', '-t', fts(duration), '-f', 's16le', 'pipe:1'])
+        output.mappings.extend(['-map', '0:a:0'])
+    output.codecs.extend(['-vn', '-c:a', 'pcm_s16le', '-ac', '1'])
+    output.outputs.extend(['-t', fts(duration), '-f', 's16le', 'pipe:1'])
 
     byte_count = math.ceil(duration * sample_rate) * np.dtype(np.int16).itemsize
 
