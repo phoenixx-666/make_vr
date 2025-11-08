@@ -125,8 +125,6 @@ def make_video(cfg: Config):
             width = max(0, terminal_width - len(text))
             print(f'{"=" * (width // 2)}{text}{"=" * (width // 2 + width % 2)}')
 
-        left = segment.left
-        right = segment.right
         seg_md = metadata[segment_index - 1]
         d_l = sum(map(lambda m: m.duration, seg_md[0]))
         d_r = sum(map(lambda m: m.duration, seg_md[1]))
@@ -176,7 +174,7 @@ def make_video(cfg: Config):
         inputs_str = []
 
         if cfg.do_stab:
-            for k, input in enumerate((left, right)[segment.stab_channel], start=input_index):
+            for k, input in enumerate((segment.left, segment.right)[segment.stab_channel], start=input_index):
                 ffmpeg_command.inputs.append(['-i', input])
                 inputs.append(k)
                 inputs_str.append(f'{k}:v:0')
@@ -218,14 +216,14 @@ def make_video(cfg: Config):
             audio_inputs = []
             k = input_index + 1
             for i in range(2):
-                for input in (left, right)[i]:
+                for input in (segment.left, segment.right)[i]:
                     ffmpeg_command.inputs.append(['-i', input])
                     all_inputs[i].append(k)
                     k += 1
             if segment.external_audio:
-                for input in cfg.audio:
+                for input in segment.audio:
                     ffmpeg_command.inputs.append(['-i', input])
-                    audio_inputs.append(k) # !!!!!!!!!!!!!!!!!!!!!!!!!!!!!
+                    audio_inputs.append(k)
                     k += 1
 
             all_input_str = left_input_str, right_input_str = [[f'{k}:v:0' for k in inputs] for inputs in (left_inputs, right_inputs)]

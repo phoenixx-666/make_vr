@@ -142,6 +142,7 @@ def get_output_filename(cfg: 'Config') -> str:
 def validate_input_files(ffprobe_path: str, left: list[list[str]], right: list[list[str]], audio: list[list[str]], ask_match: bool, do_stab: bool):
     left = [list(map(os.path.normpath, left_segment)) for left_segment in left]
     right = [list(map(os.path.normpath, right_segment)) for right_segment in right]
+    audio = [list(map(os.path.normpath, audio_segment)) for audio_segment in audio]
 
     left_dir = right_dir = False
 
@@ -163,7 +164,7 @@ def validate_input_files(ffprobe_path: str, left: list[list[str]], right: list[l
         elif right_dir:
             right = [right[0].copy() for _ in range(len(left))]
 
-    for fn in itertools.chain(*left, *right):
+    for fn in itertools.chain(*left, *right, *audio):
         if not os.path.exists(fn):
             terminate(f'Input path {fn} does not exist!')
 
@@ -176,20 +177,21 @@ def validate_input_files(ffprobe_path: str, left: list[list[str]], right: list[l
 
         if any([left_dir_segment, right_dir_segment]):
             if len(left_files) > 1 or len(right_files) > 1:
-                terminate('If a segment has a directory specified for one eye, each eye can have only one file/directory')
+                terminate('If a segment has a directory specified for one eye, other eye can have only one file')
             if all([left_dir_segment, right_dir_segment]):
                 terminate("Both inputs can't be directories")
             if left_dir_segment:
-                closest, diff = find_closest(ffprobe_path, left_files[0], right_files[0])
+                closest, diff = find_closest(ffprobe_path, left_files[0], target := right_files[0])
                 left_files.clear()
                 left_files.append(closest)
             else:
-                closest, diff = find_closest(ffprobe_path, right_files[0], left_files[0])
+                closest, diff = find_closest(ffprobe_path, right_files[0], target := left_files[0])
                 right_files.clear()
                 right_files.append(closest)
             if closest:
+                prompt = f'Found file "{closest}" matching "{target}" with difference of {diff:.3f} seconds.'
                 if ask_match:
-                    print(f'Found file "{closest}" with difference of {diff:.3f} seconds. Continue? [Y/n]', end=None)
+                    print(f'{prompt} Continue? [Y/n]', end=None)
                     while True:
                         resp = getch()
                         try:
@@ -203,7 +205,7 @@ def validate_input_files(ffprobe_path: str, left: list[list[str]], right: list[l
                         except UnicodeDecodeError:
                             terminate('Bad unicode character input')
                 else:
-                    print(f'Found file "{closest}" with difference of {diff:.3f} seconds.')
+                    print(prompt)
             else:
                 ft = "image" if (do_image := filetype.is_image(left[0] or right[0])) else "video"
                 terminate(f'Unable to find corresponding {ft}')
@@ -221,4 +223,10 @@ def validate_input_files(ffprobe_path: str, left: list[list[str]], right: list[l
 
         first = False
 
-    return do_image, left, right
+    if audio:
+        if len(audio) != len(left):
+            terminate('If external audio is specified, the number of audio segments must match that of video segments!')
+    else:
+        audio = [[]] * len(left)
+
+    return do_image, left, right, audio
