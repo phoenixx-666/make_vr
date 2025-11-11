@@ -1,6 +1,6 @@
 import argparse
-from dataclasses import dataclass, field
-from typing import Any
+from dataclasses import dataclass
+from typing import Any, Self
 
 from .fs import validate_input_files
 from .shell import terminate
@@ -35,12 +35,12 @@ class Config:
     audio_codec: str
     audio_bitrate: str
 
-    quality: int = 2
-    do_image: bool | None = None
+    quality: int
+    do_image: bool
 
-    ffmpeg_path: str = ''
-    ffprobe_path: str = ''
-    ffmpeg_verbose: bool = False
+    ffmpeg_path: str
+    ffprobe_path: str
+    ffmpeg_verbose: bool
 
     @dataclass
     class Segment:
@@ -63,45 +63,29 @@ class Config:
         override_offset: float | None
         trim: float | None
         ultra_sync: int | None
-        extra_video_filter: list[str] = field(default_factory=list)
-        extra_audio_filter: list[str] = field(default_factory=list)
-        fill_end: bool = False
-        wav_duration: float | None = None
+        extra_video_filter: list[str]
+        extra_audio_filter: list[str]
+        fill_end: bool
+        wav_duration: float | None
 
-        stab_args: str | None = None
+        stab_args: str | None
         stab_channel: int = 0
 
-    segments: list[Segment] = field(default_factory=list)
-    output: str | None = None
-    separate_audio: bool = False
-    do_stab: bool = False
+    segments: list[Segment]
+    output: str | None
+    separate_audio: bool
+    do_stab: bool
 
     @classmethod
-    def from_args(cls) -> 'Config':
-        parser = cls._make_parser()
-        args = parser.parse_args()
+    def from_args(cls) -> Self:
+        args = cls._make_parser().parse_args()
 
         do_stab = (args.stab is not None) or (args.stab_channel is not None)
         do_image, left, right, audio = validate_input_files(args.ffprobe_path,
                                                             args.left, args.right, args.audio or [],
                                                             args.ask_match, do_stab)
 
-        num_segments = len(left)
-
-        ih_fov = cls._multiply_args(num_segments, args, 'ihfov', 122.0)
-        iv_fov = cls._multiply_args(num_segments, args, 'ivfov', 108.0)
-
-        fade = cls._multiply_args(num_segments, args, 'fade', [1.0])
-        channel = cls._multiply_args(num_segments, args, 'channel', 0)
-        duration = cls._multiply_args(num_segments, args, 'duration', None)
-        extra_offset = cls._multiply_args(num_segments, args, 'offset', 0.0)
-        override_offset = cls._multiply_args(num_segments, args, 'override-offset', None)
-        trim = cls._multiply_args(num_segments, args, 'trim', 0.0)
-        ultra_sync = cls._multiply_args(num_segments, args, 'ultra-sync', None)
-        video_filter = cls._multiply_args(num_segments, args, 'video-filter', [])
-        audio_filter = cls._multiply_args(num_segments, args, 'audio-filter', [])
-        fill_end = cls._multiply_args(num_segments, args, 'fill-end', False)
-        wav_duration = cls._multiply_args(num_segments, args, 'wav-duration', None)
+        am = _ArgsMultiplier(len(left), args)
 
         segments = [
             cls.Segment(
@@ -111,28 +95,28 @@ class Config:
 
                 external_audio=bool(audio[i]),
 
-                duration=duration[i],
+                duration=am.multiply_arg('duration', None, i),
 
-                ih_fov=ih_fov[i],
-                iv_fov=iv_fov[i],
+                ih_fov=am.multiply_arg('ihfov', 122.0, i),
+                iv_fov=am.multiply_arg('ivfov', 108.0, i),
 
-                fade=fade[i],
-                channel=channel[i],
-                do_audio=channel[i] != -1,
+                fade=am.multiply_arg('fade', [1.0], i),
+                channel=(channel := am.multiply_arg('channel', 0, i)),
+                do_audio=channel != -1,
 
-                extra_offset=extra_offset[i],
-                override_offset=override_offset[i],
-                trim=trim[i],
-                ultra_sync=ultra_sync[i],
-                extra_video_filter=video_filter[i],
-                extra_audio_filter=audio_filter[i],
-                fill_end=fill_end[i],
-                wav_duration=wav_duration[i],
+                extra_offset=am.multiply_arg('offset', 0.0, i),
+                override_offset=am.multiply_arg('override-offset', None, i),
+                trim=am.multiply_arg('trim', 0.0, i),
+                ultra_sync=am.multiply_arg('ultra-sync', None, i),
+                extra_video_filter=am.multiply_arg('video-filter', [], i),
+                extra_audio_filter=am.multiply_arg('audio-filter', [], i),
+                fill_end=am.multiply_arg('fill-end', False, i),
+                wav_duration=am.multiply_arg('wav-duration', None, i),
 
                 stab_args=args.stab or None,
                 stab_channel=0 if (args.stab_channel is None) else args.stab_channel,
             )
-            for i in range(num_segments)
+            for i in range(am.num_segments)
         ]
 
         return Config(
@@ -165,19 +149,6 @@ class Config:
             ffprobe_path=args.ffprobe_path,
             ffmpeg_verbose=args.ffmpeg_print,
         )
-
-    @staticmethod
-    def _multiply_args(num_segments: int, args: argparse.Namespace, arg_name: str, default: Any) -> list[Any]:
-        if not (arg := getattr(args, arg_name.replace('-', '_'))):
-            return [default] * num_segments
-
-        if len(arg) == num_segments:
-            return arg
-
-        if len(arg) == 1:
-            return [arg[0]] * num_segments
-
-        terminate(f'Argument "{arg_name}" must be specified either for every segment or once')
 
     @staticmethod
     def _make_parser() -> argparse.ArgumentParser:
@@ -250,3 +221,21 @@ class Config:
         arg_group.add_argument('--ffmpeg-print', '-P', action='store_true', help='Print all ffmpeg output')
 
         return parser
+
+
+@dataclass
+class _ArgsMultiplier:
+    num_segments: int
+    args: argparse.Namespace
+
+    def multiply_arg(self, arg_name: str, default: Any, index: int) -> Any:
+        if not (arg := getattr(self.args, arg_name.replace('-', '_'))):
+            return default
+
+        if len(arg) == self.num_segments:
+            return arg[index]
+
+        if len(arg) == 1:
+            return arg[0]
+
+        terminate(f'Argument "{arg_name}" must be specified either for every segment or once')
