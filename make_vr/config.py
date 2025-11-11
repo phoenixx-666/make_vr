@@ -87,16 +87,21 @@ class Config:
                                                             args.ask_match, do_stab)
 
         num_segments = len(left)
-        fade = cls._multiply_args(num_segments, args.fade, [1.0], 'fade')
-        channel = cls._multiply_args(num_segments, args.channel, 0, 'channel')
-        duration = cls._multiply_args(num_segments, args.duration, None, 'duration')
-        extra_offset = cls._multiply_args(num_segments, args.offset, 0.0, 'offset')
-        override_offset = cls._multiply_args(num_segments, args.override_offset, None, 'override-offset')
-        ih_fov = cls._multiply_args(num_segments, args.ihfov, 122.0, 'ihfov')
-        iv_fov = cls._multiply_args(num_segments, args.ivfov, 108.0, 'ivfov')
-        trim = cls._multiply_args(num_segments, args.trim, 0.0, 'trim')
-        fill_end = cls._multiply_args(num_segments, args.fill_end, False, 'fill-end')
-        wav_duration = cls._multiply_args(num_segments, args.wav_duration, None, 'wav-duration')
+
+        ih_fov = cls._multiply_args(num_segments, args, 'ihfov', 122.0)
+        iv_fov = cls._multiply_args(num_segments, args, 'ivfov', 108.0)
+
+        fade = cls._multiply_args(num_segments, args, 'fade', [1.0])
+        channel = cls._multiply_args(num_segments, args, 'channel', 0)
+        duration = cls._multiply_args(num_segments, args, 'duration', None)
+        extra_offset = cls._multiply_args(num_segments, args, 'offset', 0.0)
+        override_offset = cls._multiply_args(num_segments, args, 'override-offset', None)
+        trim = cls._multiply_args(num_segments, args, 'trim', 0.0)
+        ultra_sync = cls._multiply_args(num_segments, args, 'ultra-sync', None)
+        video_filter = cls._multiply_args(num_segments, args, 'video-filter', [])
+        audio_filter = cls._multiply_args(num_segments, args, 'audio-filter', [])
+        fill_end = cls._multiply_args(num_segments, args, 'fill-end', False)
+        wav_duration = cls._multiply_args(num_segments, args, 'wav-duration', None)
 
         segments = [
             cls.Segment(
@@ -116,11 +121,11 @@ class Config:
                 do_audio=channel[i] != -1,
 
                 extra_offset=extra_offset[i],
-                override_offset=override_offset[i], # !!!!!!!!
+                override_offset=override_offset[i],
                 trim=trim[i],
-                ultra_sync=args.ultra_sync,
-                extra_video_filter=args.video_filter or [],
-                extra_audio_filter=args.audio_filter or [],
+                ultra_sync=ultra_sync[i],
+                extra_video_filter=video_filter[i],
+                extra_audio_filter=audio_filter[i],
                 fill_end=fill_end[i],
                 wav_duration=wav_duration[i],
 
@@ -162,17 +167,17 @@ class Config:
         )
 
     @staticmethod
-    def _multiply_args(num_segments: int, arg: list[Any], default: Any, arg_name: str) -> list[Any]:
-        if not arg:
+    def _multiply_args(num_segments: int, args: argparse.Namespace, arg_name: str, default: Any) -> list[Any]:
+        if not (arg := getattr(args, arg_name.replace('-', '_'))):
             return [default] * num_segments
 
-        if len(arg) not in (1, num_segments):
-            terminate(f'Argument "{arg_name}" must be specified either for every segment or once')
+        if len(arg) == num_segments:
+            return arg
 
         if len(arg) == 1:
             return [arg[0]] * num_segments
 
-        return arg
+        terminate(f'Argument "{arg_name}" must be specified either for every segment or once')
 
     @staticmethod
     def _make_parser() -> argparse.ArgumentParser:
@@ -204,13 +209,13 @@ class Config:
         arg_group.add_argument('--offset', action='append', type=duration, help='Extra offset for the cut video [seconds or h:m:s]')
         arg_group.add_argument('--override-offset', action='append', nargs=2, metavar=('INPUT', 'OFFSET'), help='Override offset on specified input of video segment')
         arg_group.add_argument('--trim', '-T', action='append', type=duration, help='Time to trim video segment from the beginning, after the videos are synchronized')
-        arg_group.add_argument('--ultra-sync', '-u', type=int, nargs='?', const=_DEFAULT_USYNC,
+        arg_group.add_argument('--ultra-sync', '-u', action='append', type=int, nargs='?', const=_DEFAULT_USYNC,
                                 help=f'Apply extra synchronization by multiplying FPS by given number [default: {_DEFAULT_USYNC}], '
                                      'with interpolation and then lowering FPS back after trimming. '
                                      'For multiple segment videos, specify 0 as the argument to suppress sync on current segment')
-        arg_group.add_argument('--video-filter', '-F', type=str, nargs='*', metavar='filter',
+        arg_group.add_argument('--video-filter', '-F', action='append', type=str, nargs='*', metavar='filter',
                                 help='Custom video filters, applied before conversion from fisheye to equirectangular')
-        arg_group.add_argument('--audio-filter', '--af', type=str, nargs='*', metavar='filter', help='Custom audio filters')
+        arg_group.add_argument('--audio-filter', '--af', action='append', type=str, nargs='*', metavar='filter', help='Custom audio filters')
         arg_group.add_argument('--fill-end', action='append', type=int, nargs='?', const=1,
                                help='If two video segments are of unequal length after synchronization, '
                                     'fill the end of the resulting segment with non-stereo content, '
