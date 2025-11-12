@@ -1,5 +1,9 @@
 import argparse
-from dataclasses import dataclass, field
+from dataclasses import dataclass
+from typing import Any, Self
+
+from .fs import validate_input_files
+from .shell import terminate
 
 
 __all__ = ['Config', 'duration']
@@ -16,65 +20,139 @@ def duration(s: str | float | int) -> float:
 
 @dataclass
 class Config:
-    left: str | list[str]
-    right: str | list[str]
-    audio: str | list[str]
-    output: str | None
-
-    external_audio: bool
-
     threads: int
     get_offset: bool
-    yes: bool
     overwrite: bool
     rename: bool
     ask_match: bool
     print: int | None
     do_print: bool
 
-    ih_fov: float
-    iv_fov: float
-
-    fade: list[float]
-    channel: int
-    do_audio: bool
-
     bitrate: str
-    duration: float | None
     video_codec: str
     preset: str
     pixel_format: str
     audio_codec: str
     audio_bitrate: str
 
-    extra_offset: float | None
-    override_offset: float | None
-    trim: float | None
-    ultra_sync: int | None
-    extra_video_filter: list[str] = field(default_factory=list)
-    extra_audio_filter: list[str] = field(default_factory=list)
-    separate_audio: bool = False
-    fill_end: bool = False
-    wav_duration: float | None = None
+    quality: int
+    do_image: bool
 
-    do_stab: bool = False
-    stab_args: str | None = None
-    stab_channel: int = 0
+    ffmpeg_path: str
+    ffprobe_path: str
+    ffmpeg_verbose: bool
 
-    quality: int = 2
-    do_image: bool | None = None
+    @dataclass
+    class Segment:
+        left: str | list[str]
+        right: str | list[str]
+        audio: str | list[str]
 
-    ffmpeg_path: str = ''
-    ffprobe_path: str = ''
-    ffmpeg_verbose: bool = False
+        external_audio: bool
+
+        duration: float | None
+
+        ih_fov: float
+        iv_fov: float
+
+        fade: list[float]
+        channel: int
+        do_audio: bool
+
+        extra_offset: float | None
+        override_offset: float | None
+        trim: float | None
+        ultra_sync: int | None
+        extra_video_filter: list[str]
+        extra_audio_filter: list[str]
+        fill_end: bool
+        wav_duration: float | None
+
+        stab_args: str | None
+        stab_channel: int = 0
+
+    segments: list[Segment]
+    output: str | None
+    separate_audio: bool
+    do_stab: bool
+
+    @classmethod
+    def from_args(cls) -> Self:
+        args = cls._make_parser().parse_args()
+        inputs = validate_input_files(args)
+        am = _ArgsMultiplier(len(inputs.segments), args)
+
+        segments = [
+            cls.Segment(
+                left=inputs.segments[i].left,
+                right=inputs.segments[i].right,
+                audio=inputs.segments[i].audio,
+
+                external_audio=bool(inputs.segments[i].audio),
+
+                duration=am.multiply_arg('duration', None, i),
+
+                ih_fov=am.multiply_arg('ihfov', 122.0, i),
+                iv_fov=am.multiply_arg('ivfov', 108.0, i),
+
+                fade=am.multiply_arg('fade', [1.0], i),
+                channel=(channel := am.multiply_arg('channel', 0, i)),
+                do_audio=channel != -1,
+
+                extra_offset=am.multiply_arg('offset', 0.0, i),
+                override_offset=am.multiply_arg('override-offset', None, i),
+                trim=am.multiply_arg('trim', 0.0, i),
+                ultra_sync=am.multiply_arg('ultra-sync', None, i),
+                extra_video_filter=am.multiply_arg('video-filter', [], i),
+                extra_audio_filter=am.multiply_arg('audio-filter', [], i),
+                fill_end=am.multiply_arg('fill-end', False, i),
+                wav_duration=am.multiply_arg('wav-duration', None, i),
+
+                stab_args=args.stab or None,
+                stab_channel=0 if (args.stab_channel is None) else args.stab_channel,
+            )
+            for i in range(am.num_segments)
+        ]
+
+        return Config(
+            threads=args.threads,
+            get_offset=bool(args.get_offset),
+            overwrite=bool(args.overwrite or args.yes),
+            rename=bool(args.rename),
+            ask_match=bool(args.ask_match),
+            print=args.print,
+            do_print=args.print is not None,
+
+            bitrate=args.bitrate,
+            video_codec=args.video_codec,
+            preset=args.preset,
+            pixel_format=args.pixel_format,
+            audio_codec=args.audio_codec,
+            audio_bitrate=args.audio_bitrate,
+
+            segments=segments,
+            output=args.output,
+
+            separate_audio=args.separate_audio,
+
+            do_stab=inputs.do_stab,
+
+            quality=args.quality,
+            do_image=inputs.do_image,
+
+            ffmpeg_path=args.ffmpeg_path,
+            ffprobe_path=args.ffprobe_path,
+            ffmpeg_verbose=args.ffmpeg_print,
+        )
 
     @staticmethod
-    def from_args() -> 'Config':
+    def _make_parser() -> argparse.ArgumentParser:
         parser = argparse.ArgumentParser()
+
         parser.description = 'VR Video maker designed for processing GoPro fisheye videos'
-        parser.add_argument('-l', '--left', type=str, nargs='+', metavar='path', required=True)
-        parser.add_argument('-r', '--right', type=str, nargs='+', metavar='path', required=True)
-        parser.add_argument('-a', '--audio', type=str, nargs='+', metavar='path', help='')
+        parser.add_argument('-l', '--left', action='append', type=str, nargs='+', metavar='path', required=True)
+        parser.add_argument('-r', '--right', action='append', type=str, nargs='+', metavar='path', required=True)
+        parser.add_argument('-a', '--audio', action='append', type=str, nargs='*', metavar='path', help='')
         parser.add_argument('-o', '--output', type=str, metavar='path')
 
         parser.add_argument('-t', '--threads', type=int)
@@ -87,13 +165,32 @@ class Config:
         parser.add_argument('-p', '--print', type=int, nargs='?', const=0, metavar='line_width', help='Only print ffmpeg command without executing it')
 
         arg_group = parser.add_argument_group('Camera options')
-        arg_group.add_argument('--ihfov', type=float, default=122.0, help='Horizontal FOV of an input fisheye image')
-        arg_group.add_argument('--ivfov', type=float, default=108.0, help='Vertical FOV of an input fisheye image')
+        arg_group.add_argument('--ihfov', action='append', type=float, help='Horizontal FOV of an input fisheye image')
+        arg_group.add_argument('--ivfov', action='append', type=float, help='Vertical FOV of an input fisheye image')
+
+        arg_group = parser.add_argument_group('Video processing options')
+        arg_group.add_argument('-f', '--fade', action='append', type=duration, nargs='+', help='Add fade effect in the beginning and the end of the video segment')
+        arg_group.add_argument('-c', '--channel', action='append', type=int, choices=[-1, 0, 1], help='Use audio from the video file segment for the given eye, or -1 for no audio')
+        arg_group.add_argument('-d', '--duration', action='append', type=duration, help='Maximum duration of the output video segment [seconds or h:m:s]')
+        arg_group.add_argument('--offset', action='append', type=duration, help='Extra offset for the cut video [seconds or h:m:s]')
+        arg_group.add_argument('--override-offset', action='append', nargs=2, metavar=('INPUT', 'OFFSET'), help='Override offset on specified input of video segment')
+        arg_group.add_argument('--trim', '-T', action='append', type=duration, help='Time to trim video segment from the beginning, after the videos are synchronized')
+        arg_group.add_argument('--ultra-sync', '-u', action='append', type=int, nargs='?', const=_DEFAULT_USYNC,
+                                help=f'Apply extra synchronization by multiplying FPS by given number [default: {_DEFAULT_USYNC}], '
+                                     'with interpolation and then lowering FPS back after trimming. '
+                                     'For multiple segment videos, specify 0 as the argument to suppress sync on current segment')
+        arg_group.add_argument('--video-filter', '-F', action='append', type=str, nargs='*', metavar='filter',
+                                help='Custom video filters, applied before conversion from fisheye to equirectangular')
+        arg_group.add_argument('--audio-filter', '--af', action='append', type=str, nargs='*', metavar='filter', help='Custom audio filters')
+        arg_group.add_argument('--fill-end', action='append', type=int, nargs='?', const=1,
+                               help='If two video segments are of unequal length after synchronization, '
+                                    'fill the end of the resulting segment with non-stereo content, '
+                                    'up to the duration of the longer video. For multiple-segment videos, '
+                                    'specify "--fill-end 0" for the segments that require no filling')
+        arg_group.add_argument('--wav-duration', type=duration, metavar='DURATION',
+                               help='Portion of sound to extract from left and right video that will be used in automatic synchronization')
 
         arg_group = parser.add_argument_group('Video options')
-        arg_group.add_argument('-f', '--fade', type=duration, nargs='+', default=[1.0], help='Add fade effect in the beginning and the end of the video')
-        arg_group.add_argument('-c', '--channel', type=int, choices=[-1, 0, 1], default=0, help='Use audio from the video file for the given eye, or -1 for no audio')
-        arg_group.add_argument('-d', '--duration', type=duration, help='Maximum duration of the output video [seconds or h:m:s]')
         arg_group.add_argument('--video-codec', '--vc', type=str, default=(DEFAULT := 'hevc_nvenc'),
                                help=f'Video codec (must be suitable for FFMpeg, default: {DEFAULT})')
         arg_group.add_argument('-b', '--bitrate', type=str, default='40M', help='Output video bitrate (Value must be compatible with ffmpeg)')
@@ -104,22 +201,7 @@ class Config:
                                help=f'Audio codec (must be suitable for FFMpeg, default: {DEFAULT})')
         arg_group.add_argument('--audio-bitrate', '--ab', type=str, default=(DEFAULT := '192k'),
                                help=f'Audio bitrate (must be suitable for FFMpeg, default: {DEFAULT})')
-        arg_group.add_argument('--offset', type=duration, default=0.0, help='Extra offset for the cut video [seconds or h:m:s]')
-        arg_group.add_argument('--override-offset', nargs=2, metavar=('INPUT', 'OFFSET'), help='Override offset on specified input')
-        arg_group.add_argument('--trim', '-T', type=duration, default=0.0, help='Time to trim from the beginning, after the videos are synchronized')
-        arg_group.add_argument('--ultra-sync', '-u', type=int, nargs='?', const=_DEFAULT_USYNC,
-                                help=f'Apply extra synchronization by multiplying FPS by given number [default: {_DEFAULT_USYNC}], '
-                                     'with interpolation and then lowering FPS back after trimming')
-        arg_group.add_argument('--video-filter', '-F', type=str, nargs='+', metavar='filter',
-                                help='Custom video filters, applied before conversion from fisheye to equirectangular')
-        arg_group.add_argument('--audio-filter', '--af', type=str, nargs='+', metavar='filter', help='Custom audio filters')
         arg_group.add_argument('--separate-audio', '-A', action='store_true', help='Store audio as a separate wav file for further editing')
-        arg_group.add_argument('--fill-end', action='store_true',
-                               help='If two videos are of unequal length after synchronization, '
-                                    'fill the end of the resulting video with non-stereo content, '
-                                    'up to the duration of the longer video')
-        arg_group.add_argument('--wav-duration', type=duration, metavar='DURATION',
-                               help='Portion of sound to extract from left and right video that will be used in automatic synchronization')
         arg_group.add_argument('--stab', type=str, metavar='ARGS', nargs='?', const='',
                                help='Produce the stabilization file instead of video with vidstabdetect filter with optional extra ARGS')
         arg_group.add_argument('--stab-channel', type=int, metavar='INDEX',
@@ -133,55 +215,22 @@ class Config:
         arg_group.add_argument('--ffprobe-path', type=str, default='ffprobe', help='Path to the ffprobe executable')
         arg_group.add_argument('--ffmpeg-print', '-P', action='store_true', help='Print all ffmpeg output')
 
-        args = parser.parse_args()
+        return parser
 
-        return Config(
-            left=args.left,
-            right=args.right,
-            audio=args.audio,
-            output=args.output,
 
-            threads=args.threads,
-            get_offset=bool(args.get_offset),
-            yes=bool(args.yes),
-            overwrite=bool(args.overwrite),
-            rename=bool(args.rename),
-            ask_match=bool(args.ask_match),
-            print=args.print,
-            do_print=args.print is not None,
+@dataclass
+class _ArgsMultiplier:
+    num_segments: int
+    args: argparse.Namespace
 
-            external_audio=args.audio is not None,
+    def multiply_arg(self, arg_name: str, default: Any, index: int) -> Any:
+        if not (arg := getattr(self.args, arg_name.replace('-', '_'))):
+            return default
 
-            ih_fov=args.ihfov,
-            iv_fov=args.ivfov,
+        if len(arg) == self.num_segments:
+            return arg[index]
 
-            fade=args.fade,
-            channel=args.channel,
-            duration=args.duration,
-            do_audio=args.audio != -1,
-            video_codec=args.video_codec,
-            bitrate=args.bitrate,
-            preset=args.preset,
-            pixel_format=args.pixel_format,
-            audio_codec=args.audio_codec,
-            audio_bitrate=args.audio_bitrate,
-            extra_offset=args.offset,
-            override_offset=args.override_offset,
-            trim=args.trim,
-            ultra_sync=args.ultra_sync,
-            extra_video_filter=args.video_filter or [],
-            extra_audio_filter=args.audio_filter or [],
-            separate_audio=args.separate_audio,
-            fill_end=args.fill_end,
-            wav_duration=args.wav_duration,
+        if len(arg) == 1:
+            return arg[0]
 
-            do_stab=(args.stab is not None) or (args.stab_channel is not None),
-            stab_args=args.stab or None,
-            stab_channel=0 if (args.stab_channel is None) else args.stab_channel,
-
-            quality=args.quality,
-
-            ffmpeg_path=args.ffmpeg_path,
-            ffprobe_path=args.ffprobe_path,
-            ffmpeg_verbose=args.ffmpeg_print,
-        )
+        terminate(f'Argument "{arg_name}" must be specified either for every segment or once')

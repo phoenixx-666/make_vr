@@ -2,10 +2,7 @@ from collections import deque
 from dataclasses import dataclass
 import datetime
 from fractions import Fraction
-import json
-import math
-import re
-import subprocess as sp
+import os
 import sys
 from typing import Any
 
@@ -13,11 +10,11 @@ import pexpect
 import pexpect.popen_spawn
 from tqdm import tqdm
 
-from .audio import get_wav_samples, find_offset
+from .audio import get_samples, find_offset
 from .config import Config
 from .filters import Filter, FilterSeq, FilterGraph, fts
 from .fs import probe, get_output_filename, resolve_existing, swap_extension
-from .shell import print_command
+from .shell import FFMpegCommand, terminate
 
 
 __all__ = ['make_video']
@@ -30,8 +27,9 @@ O_FOV = 180
 @dataclass
 class Metadata:
     fps: Fraction
-    # timecode: tuple[int, int, int, int] | None
     duration: float
+    sample_rate: int
+    channel_layout: str
 
 
 class PyTaskbarStub:
@@ -58,20 +56,27 @@ def d_to_hms(d: float) -> str:
 
 
 def get_metadata(metadata: dict[str, Any]) -> Metadata:
-    streams = metadata['streams']
-    s0md = streams[0]
-    timecode = re.split(r'[:;]', (s0md.get('tags', {}).get('timecode', '') or s0md.get('tags', {}).get('TIMECODE', '')))
-
     try:
-        fps = Fraction(s0md['r_frame_rate'])
-    except ZeroDivisionError:
-        fps = Fraction(0)
+        streams = metadata['streams']
+        video_stream = next(filter(lambda stream: stream.get('codec_type') == 'video', streams))
+        audio_stream = next(filter(lambda stream: stream.get('codec_type') == 'audio', streams))
 
-    return Metadata(
-        fps = fps,
-        # timecode = tuple(map(int, timecode)) if timecode[0] else None,
-        duration = float(s0md.get('duration', 0)) or sum([60.0 ** i * float(x) for i, x in enumerate(s0md['tags']['DURATION'].split(':')[::-1])])
-    )
+        fps = Fraction(video_stream['r_frame_rate'])
+        duration = float(video_stream.get('duration', 0)) or \
+            sum([60.0 ** i * float(x) for i, x in enumerate(video_stream['tags']['DURATION'].split(':')[::-1])])
+
+        return Metadata(
+            fps = fps,
+            duration = duration,
+            sample_rate=int(audio_stream['sample_rate']),
+            channel_layout=audio_stream['channel_layout'],
+        )
+    except KeyError as exc:
+        terminate(f'Error reading metadata: lack of key "{exc.args[0]}"')
+    except StopIteration:
+        terminate('Unable to find stream')
+    except ZeroDivisionError:
+        terminate('Incorrect frame rate value')
 
 
 def make_video(cfg: Config):
@@ -85,229 +90,278 @@ def make_video(cfg: Config):
         datetime_fmt = '%d %b %Y %H:%M:%S UTC'
         time_fmt = '%H:%M:%S UTC'
 
-    left = cfg.left
-    right = cfg.right
+    probe_ = lambda fn: probe(cfg.ffprobe_path, fn)
+
     out = get_output_filename(cfg)
 
-    if cfg.do_audio and cfg.separate_audio:
+    if any(segment.do_audio for segment in cfg.segments) and cfg.separate_audio:
         out_wav = resolve_existing(cfg, swap_extension(out, 'wav'))
 
-    probe_ = lambda fn: probe(cfg, fn)
-    metadata = [list(map(get_metadata, map(probe_, inputs)))
-                for inputs in (left, right)]
-    if cfg.override_offset:
-        cut_index = int(cfg.override_offset[0])
-        time_diff = duration(cfg.override_offset[1])
-    else:
-        if cfg.wav_duration is not None:
-            wav_duration = cfg.wav_duration
-        else:
-            wav_duration = abs(sum(map(lambda m: m.duration, metadata[0])) - sum(map(lambda m: m.duration, metadata[1]))) + 60.0
-        print(f'wav_duration={d_to_hms(wav_duration)} ({fts(wav_duration)} s)')
-        left_a, rate = get_wav_samples(cfg, 'left', wav_duration)
-        right_a, _ = get_wav_samples(cfg, 'right', wav_duration)
-        time_diff = find_offset(left_a, right_a, rate)
-        if time_diff < 0.0:
-            time_diff = -time_diff
-            cut_index = 0
-        elif time_diff > 0.0:
-            cut_index = 1
-        else:
-            cut_index = -1
-        if cfg.get_offset:
-            print(f'Offset is {d_to_hms(time_diff)} (({fts(time_diff)} s), {cut_index})')
-            exit()
-
-    if cfg.extra_offset:
-        time_diff += cfg.extra_offset
-
-    durations = tuple(sum(m.duration for m in metadatas) - cfg.trim - (time_diff if i == cut_index else 0)
-                      for i, metadatas in enumerate(metadata))
-    duration = (max if cfg.fill_end else min)(durations)
-    if cfg.duration and cfg.duration < duration:
-        duration = cfg.duration
-        if cfg.fill_end and duration <= min(durations):
-            cfg.fill_end = False
-
-    print(f'time_diff={d_to_hms(time_diff)} ({fts(time_diff)} s)')
-    print(f'cut_index={cut_index:d}')
-    print(f'duration={d_to_hms(duration)} ({fts(duration)} s)')
-
-    command = [cfg.ffmpeg_path]
+    ffmpeg_command = FFMpegCommand(cfg.ffmpeg_path)
     if cfg.threads:
-        command.extend(['-threads', str(cfg.threads)])
+        ffmpeg_command.general_params.extend(['-threads', str(cfg.threads)])
     if cfg.overwrite or not cfg.do_print:
-        command.extend(['-y'])
+        ffmpeg_command.general_params.extend(['-y'])
 
-    fps = metadata[0][0].fps
+    segments = cfg.segments
 
-    if cfg.do_stab:
+    metadata = [[list(map(get_metadata, map(probe_, files))) for files in inputs]
+                 for inputs in ((segment.left, segment.right) for segment in segments)]
+    fps = (base_metadata := metadata[0][0][0]).fps
+    channel_layout = base_metadata.channel_layout
+    sample_rate = base_metadata.sample_rate
+    total_duration = 0.0
+    any_do_audio = any(segment.do_audio for segment in segments)
+
+    input_index = 0
+    filter_seqs = []
+
+    terminal_width = os.get_terminal_size().columns - 1
+
+    for segment_index, segment in enumerate(segments, start=1):
+
+        if len(segments) > 1:
+            text = f' SEGMENT {segment_index} '
+            width = max(0, terminal_width - len(text))
+            print(f'{"=" * (width // 2)}{text}{"=" * (width // 2 + width % 2)}')
+
+        seg_md = metadata[segment_index - 1]
+        d_l = sum(map(lambda m: m.duration, seg_md[0]))
+        d_r = sum(map(lambda m: m.duration, seg_md[1]))
+
+        if segment.override_offset:
+            cut_index = int(segment.override_offset[0])
+            time_diff = duration(segment.override_offset[1])
+        else:
+            if segment.wav_duration is not None:
+                wav_duration = segment.wav_duration
+            else:
+                wav_duration = abs(d_l - d_r) + 60.0
+            print(f'wav_duration={d_to_hms(wav_duration)} ({fts(wav_duration)} s)')
+            left_a = get_samples(cfg, segment, 'left', wav_duration, sample_rate)
+            right_a = get_samples(cfg, segment, 'right', wav_duration, sample_rate)
+            time_diff = find_offset(left_a, right_a, sample_rate)
+            if time_diff < 0.0:
+                time_diff = -time_diff
+                cut_index = 0
+            elif time_diff > 0.0:
+                cut_index = 1
+            else:
+                cut_index = -1
+            if cfg.get_offset:
+                print(f'Offset is {d_to_hms(time_diff)} (({fts(time_diff)} s), {cut_index})')
+                exit()
+
+        if segment.extra_offset:
+            time_diff += segment.extra_offset
+
+        durations = tuple(duration - segment.trim - (time_diff if i == cut_index else 0)
+                          for i, duration in enumerate((d_l, d_r)))
+        duration = (max if segment.fill_end else min)(durations)
+
+        if segment.duration and segment.duration < duration:
+            duration = segment.duration
+            if segment.fill_end and duration <= min(durations):
+                segment.fill_end = False
+
+        total_duration += duration
+
+        print(f'time_diff={d_to_hms(time_diff)} ({fts(time_diff)} s)')
+        print(f'cut_index={cut_index:d}')
+        print(f'duration={d_to_hms(duration)} ({fts(duration)} s)')
+
         inputs = []
         inputs_str = []
-        for k, input in enumerate((cfg.left, cfg.right)[cfg.stab_channel]):
-            command.extend(['-i', input])
-            inputs.append(k)
-            inputs_str.append(f'{k}:v:0')
 
-        print(inputs)
+        if cfg.do_stab:
+            for k, input in enumerate((segment.left, segment.right)[segment.stab_channel], start=input_index):
+                ffmpeg_command.inputs.append(['-i', input])
+                inputs.append(k)
+                inputs_str.append(f'{k}:v:0')
 
-        filters = []
+            print(inputs)
 
-        filters.append(Filter('concat', n=len(inputs), v=1, a=0))
+            filters = []
 
-        offset = cfg.trim
-        if cut_index == cfg.stab_channel:
-            offset += time_diff
-        if offset > 0.0:
-            if cfg.ultra_sync:
-                new_fps = fps * cfg.ultra_sync
-                # filters.append(Filter('minterpolate', fps=new_fps, mi_mode='mci'))
-                filters.append(Filter('framerate', fps=new_fps))
-            filters.extend([Filter('trim', start=offset), Filter('setpts', f'PTS-STARTPTS')])
-            if cfg.ultra_sync:
-                # filters.append(Filter('minterpolate', fps=fps))
-                filters.append(Filter('framerate', fps=fps))
+            filters.append(Filter('concat', n=len(inputs), v=1, a=0))
 
-        if cfg.fill_end:
-            ...
-
-        filters.append(Filter('trim', duration=duration))
-        filters.append(vsd := Filter('vidstabdetect', result=out, fileformat='ascii'))
-        if cfg.stab_args:
-            vsd.add_raw(cfg.stab_args)
-
-        command.extend(['-filter_complex', FilterSeq(inputs_str, [], filters).render()])
-        command.extend(['-f', 'null', '-'])
-
-    else:
-        suffix = ''
-        command.extend(['-f', 'lavfi', '-i', Filter('color', color='black', s=f'{SIDE * 2}x{SIDE}', r=fps).render()])
-
-        all_inputs = (left_inputs, right_inputs) = [], []
-        audio_inputs = []
-        k = 1
-        for i in range(2):
-            for input in (cfg.left, cfg.right)[i]:
-                command.extend(['-i', input])
-                all_inputs[i].append(k)
-                k += 1
-        if cfg.external_audio:
-            for input in cfg.audio:
-                command.extend(['-i', input])
-                audio_inputs.append(k)
-                k += 1
-
-        all_input_str = left_input_str, right_input_str = [[f'{k}:v:0' for k in inputs] for inputs in (left_inputs, right_inputs)]
-
-        print(all_inputs)
-
-        all_filters = left_filters, right_filters = [], []
-        all_outputs = left_outputs, right_outputs = [f'left_raw{suffix}'], [f'right_raw{suffix}']
-        for i in range(2):
-            all_filters[i].append(Filter('concat', n=len(all_inputs[i]), v=1, a=0))
-            offset = cfg.trim
-            if cut_index == i:
+            offset = segment.trim
+            if cut_index == segment.stab_channel:
                 offset += time_diff
             if offset > 0.0:
-                if cfg.ultra_sync:
-                    new_fps = fps * cfg.ultra_sync
-                    # all_filters[i].append(Filter('minterpolate', fps=new_fps, mi_mode='mci'))
-                    all_filters[i].append(Filter('framerate', fps=new_fps))
-                all_filters[i].extend([Filter('trim', start=offset), Filter('setpts', f'PTS-STARTPTS')])
-                if cfg.ultra_sync:
-                    # all_filters[i].append(Filter('minterpolate', fps=fps))
-                    all_filters[i].append(Filter('framerate', fps=fps))
+                if segment.ultra_sync:
+                    new_fps = fps * segment.ultra_sync
+                    # filters.append(Filter('minterpolate', fps=new_fps, mi_mode='mci'))
+                    filters.append(Filter('framerate', fps=new_fps))
+                filters.extend([Filter('trim', start=offset), Filter('setpts', f'PTS-STARTPTS')])
+                if segment.ultra_sync:
+                    # filters.append(Filter('minterpolate', fps=fps))
+                    filters.append(Filter('framerate', fps=fps))
 
-            if cfg.fill_end:
-                if duration == durations[i]:
-                    all_filters[i].append(Filter('split'))
-                    all_outputs[i].append(f'filler_raw{suffix}')
-                else:
-                    all_input_str[i].append(f'filler{suffix}')
-                    all_filters[i][0].kw_params['n'] += 1
+            if segment.fill_end:
+                ...
 
-        v360 = Filter('v360', 'fisheye', 'e', 'lanc', iv_fov=cfg.iv_fov, ih_fov=cfg.ih_fov, h_fov=O_FOV, v_fov=O_FOV, alpha_mask=1, w=SIDE, h=SIDE)
-        filters = [Filter(filter_str) for filter_str in cfg.extra_video_filter] + [v360]
+            filters.append(Filter('trim', duration=duration))
+            filters.append(vsd := Filter('vidstabdetect', result=out, fileformat='ascii'))
+            if segment.stab_args:
+                vsd.add_raw(segment.stab_args)
+            filter_seqs.append(FilterSeq(inputs_str, [], filters))
 
-        filter_seqs = [
-            FilterSeq(left_input_str, left_outputs, left_filters),
-            FilterSeq(right_input_str, right_outputs, right_filters),
-        ]
-        if cfg.fill_end:
-            filter_seqs.insert(1, FilterSeq([f'filler_raw{suffix}'], [f'filler{suffix}'], [
-                Filter('trim', start=min(durations)),
-                Filter('setpts', f'PTS-STARTPTS'),
-            ]))
-            if duration == durations[1]:
-                filter_seqs.reverse()
-        filter_seqs.extend([
-            FilterSeq([f'left_raw{suffix}'], [f'left{suffix}'], filters),
-            FilterSeq([f'right_raw{suffix}'], [f'right{suffix}'], filters),
-            FilterSeq([f'left{suffix}', f'right{suffix}'], [f'overlay{suffix}'], [Filter('hstack', inputs=2)]),
-            video_fs := FilterSeq(['0:v:0', f'overlay{suffix}'], [f'video{suffix}'], [Filter(f'overlay{suffix}')])
-        ])
-        filter_graph = FilterGraph(filter_seqs)
+            input_index += len(inputs)
+        else:
+            suffix = '' if len(segments) == 1 else str(segment_index)
+            ffmpeg_command.inputs.append(['-f', 'lavfi', '-i', Filter('color', color='black', s=f'{SIDE * 2}x{SIDE}', r=fps).render()])
 
-        fade_in = cfg.fade[0]
-        fade_out = cfg.fade[1] if len(cfg.fade) >= 2 else cfg.fade[0]
+            all_inputs = (left_inputs, right_inputs) = [], []
+            audio_inputs = []
+            k = input_index + 1
+            for i in range(2):
+                for input in (segment.left, segment.right)[i]:
+                    ffmpeg_command.inputs.append(['-i', input])
+                    all_inputs[i].append(k)
+                    k += 1
+            if segment.external_audio:
+                for input in segment.audio:
+                    ffmpeg_command.inputs.append(['-i', input])
+                    audio_inputs.append(k)
+                    k += 1
 
-        if fade_in:
-            video_fs.filters.append(Filter('fade', t='in', st=0, d=fade_in))
-        if fade_out:
-            video_fs.filters.append(Filter('fade', t='out', st=duration - fade_out, d=fade_out))
-        video_fs.filters.append(Filter('trim', duration=duration))
+            all_input_str = left_input_str, right_input_str = [[f'{k}:v:0' for k in inputs] for inputs in (left_inputs, right_inputs)]
 
-        if cfg.do_audio:
-            audio_inputs = [f'{i}:a:0' for i in (audio_inputs if cfg.external_audio else [left_inputs, right_inputs][cfg.channel])]
-            audio_filters = [Filter(filter_str) for filter_str in cfg.extra_audio_filter] + [Filter('concat', n=len(audio_inputs), v=0, a=1)]
-            offset = cfg.trim
-            if cut_index == cfg.channel:
-                offset += time_diff
-            if offset > 0.0:
-                audio_filters.extend([Filter('atrim', start=offset), Filter('asetpts', f'PTS-STARTPTS')])
+            # print(all_inputs)
+            # print(all_input_str)
+
+            all_filters = left_filters, right_filters = [], []
+            all_outputs = left_outputs, right_outputs = [f'left_raw{suffix}'], [f'right_raw{suffix}']
+            for i in range(2):
+                all_filters[i].append(Filter('concat', n=len(all_inputs[i]), v=1, a=0))
+                offset = segment.trim
+                if cut_index == i:
+                    offset += time_diff
+                if offset > 0.0:
+                    if segment.ultra_sync:
+                        new_fps = fps * segment.ultra_sync
+                        # all_filters[i].append(Filter('minterpolate', fps=new_fps, mi_mode='mci'))
+                        all_filters[i].append(Filter('framerate', fps=new_fps))
+                    all_filters[i].extend([Filter('trim', start=offset), Filter('setpts', f'PTS-STARTPTS')])
+                    if segment.ultra_sync:
+                        # all_filters[i].append(Filter('minterpolate', fps=fps))
+                        all_filters[i].append(Filter('framerate', fps=fps))
+
+                if segment.fill_end:
+                    if duration == durations[i]:
+                        all_filters[i].append(Filter('split'))
+                        all_outputs[i].append(f'filler_raw{suffix}')
+                    else:
+                        all_input_str[i].append(f'filler{suffix}')
+                        all_filters[i][0].kw_params['n'] += 1
+
+            v360 = Filter('v360', 'fisheye', 'e', 'lanc', iv_fov=segment.iv_fov, ih_fov=segment.ih_fov, h_fov=O_FOV, v_fov=O_FOV, alpha_mask=1, w=SIDE, h=SIDE)
+            filters = [Filter(filter_str) for filter_str in segment.extra_video_filter] + [v360]
+
+            filter_seqs.extend([
+                FilterSeq(left_input_str, left_outputs, left_filters),
+                FilterSeq(right_input_str, right_outputs, right_filters),
+            ])
+            if segment.fill_end:
+                filter_seqs.insert(1, FilterSeq([f'filler_raw{suffix}'], [f'filler{suffix}'], [
+                    Filter('trim', start=min(durations)),
+                    Filter('setpts', f'PTS-STARTPTS'),
+                ]))
+                if duration == durations[1]:
+                    filter_seqs.reverse()
+            filter_seqs.extend([
+                FilterSeq([f'left_raw{suffix}'], [f'left{suffix}'], filters),
+                FilterSeq([f'right_raw{suffix}'], [f'right{suffix}'], filters),
+                FilterSeq([f'left{suffix}', f'right{suffix}'], [f'overlay{suffix}'], [Filter('hstack', inputs=2)]),
+                video_fs := FilterSeq([f'{input_index}:v:0', f'overlay{suffix}'], [f'video{suffix}'], [Filter('overlay')])
+            ])
+
+            fade_in = segment.fade[0]
+            fade_out = segment.fade[1] if len(segment.fade) >= 2 else segment.fade[0]
 
             if fade_in:
-                audio_filters.append(Filter('afade', t='in', st=0, d=fade_in))
+                video_fs.filters.append(Filter('fade', t='in', st=0, d=fade_in))
             if fade_out:
-                audio_filters.append(Filter('afade', t='out', st=duration - fade_out, d=fade_out))
-            audio_filters.append(Filter('atrim', duration=duration))
-            filter_graph.filter_seqs.append(FilterSeq(audio_inputs, [f'audio{suffix}'], audio_filters))
+                video_fs.filters.append(Filter('fade', t='out', st=duration - fade_out, d=fade_out))
+            video_fs.filters.append(Filter('trim', duration=duration))
 
-        command.extend(['-filter_complex'])
+            if segment.do_audio:
+                audio_inputs = [f'{i}:a:0' for i in (audio_inputs if segment.external_audio else [left_inputs, right_inputs][segment.channel])]
+                audio_filters = [Filter(filter_str) for filter_str in segment.extra_audio_filter] + [Filter('concat', n=len(audio_inputs), v=0, a=1)]
+                offset = segment.trim
+                if cut_index == segment.channel:
+                    offset += time_diff
+                if offset > 0.0:
+                    audio_filters.extend([Filter('atrim', start=offset), Filter('asetpts', f'PTS-STARTPTS')])
 
-        part1 = command
+                if fade_in:
+                    audio_filters.append(Filter('afade', t='in', st=0, d=fade_in))
+                if fade_out:
+                    audio_filters.append(Filter('afade', t='out', st=duration - fade_out, d=fade_out))
+                audio_filters.append(Filter('atrim', duration=duration))
+                filter_seqs.append(FilterSeq(audio_inputs, [f'audio{suffix}'], audio_filters))
 
-        fg = filter_graph.render(cfg.do_print)
+            elif any_do_audio:
+                ffmpeg_command.inputs.append(['-f', 'lavfi',  '-i', Filter(
+                    'anullsrc', channel_layout=channel_layout, sample_rate=sample_rate).render()])
+                filter_seqs.append(FilterSeq([f'{k}:a:0'], [f'audio{suffix}'], [Filter('atrim', duration=duration)]))
+                k += 1
 
-        command = ['-map', f'[video{suffix}]']
-        if cfg.do_audio and not cfg.separate_audio:
-            command.extend(['-map', f'[audio{suffix}]'])
-        command.extend(['-c:v', cfg.video_codec])
+            input_index = k
+
+            if segment_index > 1 and segment_index == len(segments):
+                concat_inputs = []
+                for i in range(1, segment_index + 1):
+                    concat_inputs.extend([f'video{i}'])
+                    if any_do_audio:
+                        concat_inputs.extend([f'audio{i}'])
+                if any_do_audio:
+                    filter_seqs.append(FilterSeq(concat_inputs, ['video', 'audio'], [Filter('concat', n=len(segments), v=1, a=1)]))
+                else:
+                    filter_seqs.append(FilterSeq(concat_inputs, ['video'], [Filter('concat', n=len(segments), v=1, a=0)]))
+
+    ffmpeg_command.filter_graph = FilterGraph(filter_seqs)
+    if cfg.do_stab:
+        ffmpeg_command.outputs.append(FFMpegCommand.Output(outputs=['-f', 'null', '-']))
+    else:
+        ffmpeg_command.outputs.append(video_output := FFMpegCommand.Output())
+        video_output.mappings.extend(['-map', '[video]'])
+        if any_do_audio and not cfg.separate_audio:
+            video_output.mappings.extend(['-map', '[audio]'])
+        video_output.codecs.extend(['-c:v', cfg.video_codec])
         if cfg.bitrate:
-            command.extend(['-vb', cfg.bitrate])
-        command.extend(['-pix_fmt', cfg.pixel_format])
+            video_output.codecs.extend(['-vb', cfg.bitrate])
+        video_output.codecs.extend(['-pix_fmt', cfg.pixel_format])
+        video_output.codecs.extend(['-preset', cfg.preset])
 
-        command.extend(['-preset', cfg.preset])
-        if cfg.do_audio and not cfg.separate_audio:
-            command.extend(['-c:a', cfg.audio_codec, '-ab', cfg.audio_bitrate])
-        command.extend(['-t', fts(duration)])
-        command.extend([out])
+        if any_do_audio and not cfg.separate_audio:
+            video_output.codecs.extend(['-c:a', cfg.audio_codec, '-ab', cfg.audio_bitrate])
+        video_output.outputs.extend(['-t', fts(total_duration)])
+        video_output.outputs.extend([out])
 
-        if cfg.do_audio and cfg.separate_audio:
-            command.extend(['-map', f'[audio{suffix}]'])
-            command.extend(['-c:a', 'pcm_s16le'])
-            command.extend(['-t', fts(duration)])
-            command.extend([out_wav])
+        if any_do_audio and cfg.separate_audio:
+            ffmpeg_command.outputs.append(audio_output := FFMpegCommand.Output())
+            audio_output.mappings.extend(['-map', f'[audio]'])
+            audio_output.codecs.extend(['-c:a', 'pcm_s16le'])
+            audio_output.outputs.extend(['-t', fts(total_duration)])
+            audio_output.outputs.extend([out_wav])
 
-        part2 = command
-        command = part1 + [fg] + part2
+    # import shlex
+    # print(shlex.join(ffmpeg_command.as_list()))
+    # exit()
 
-    if cfg.do_print:
-        print_command(cfg, part1, fg, part2)
-
-    num_frames = round(float(duration * fps))
+    num_frames = round(float(total_duration * fps))
+    if len(segments) > 1:
+        print('=' * terminal_width)
+        print(f'total_duration={d_to_hms(total_duration)} ({fts(total_duration)} s)')
     print(f'num_frames={num_frames}')
     print(f'Output Filename: "{out}"')
+
+    if cfg.do_print:
+        ffmpeg_command.print()
+        exit()
+
     proc = None
     pbar = None
 
@@ -323,9 +377,9 @@ def make_video(cfg: Config):
 
     try:
         if sys.platform.startswith('win'):
-            proc = pexpect.popen_spawn.PopenSpawn(command)
+            proc = pexpect.popen_spawn.PopenSpawn(ffmpeg_command.as_list())
         else:
-            proc = pexpect.spawn(command)
+            proc = pexpect.spawn(ffmpeg_command.as_list())
         cpl = proc.compile_pattern_list([
             pexpect.EOF,
             r'frame= *(\d+).*',
