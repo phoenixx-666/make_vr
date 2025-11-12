@@ -1,2 +1,2 @@
-PyTaskbar==0.1.0
+PyTaskbarProgress==0.0.8 # https://github.com/N3RDIUM/PyTaskbar/releases/tag/0.0.8
 tzlocal==5.3.1

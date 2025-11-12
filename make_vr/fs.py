@@ -1,3 +1,5 @@
+import argparse
+from dataclasses import dataclass
 from datetime import datetime
 from exif import Image
 import filetype
@@ -17,7 +19,21 @@ if TYPE_CHECKING:
     from .config import Config
 
 
-__all__ = ['probe', 'get_output_filename', 'swap_extension', 'resolve_existsing', 'find_closest', 'validate_input_files']
+__all__ = ['Inputs', 'probe', 'get_output_filename', 'swap_extension',
+           'resolve_existsing', 'find_closest', 'validate_input_files']
+
+
+@dataclass
+class Input:
+    @dataclass
+    class Segment:
+        left: list[str]
+        right: list[str]
+        audio: list[str]
+
+    do_image: bool
+    do_stab: bool
+    segments: list[Segment]
 
 
 def probe(ffprobe_path: str, fn: str) -> Any:
@@ -73,7 +89,7 @@ def rename(fn: str) -> str:
     return res
 
 
-def resolve_existing(cfg: 'Config', fn: str) -> str:
+def resolve_existing(cfg: Config, fn: str) -> str:
     if os.path.exists(fn):
         if cfg.rename:
             fn = rename(fn)
@@ -103,7 +119,7 @@ def swap_extension(fn: str, new_ext: str) -> str:
     return f'{os.path.splitext((fn))[0]}{new_ext}'
 
 
-def get_output_filename(cfg: 'Config') -> str:
+def get_output_filename(cfg: Config) -> str:
     if cfg.output:
         fn = os.path.normpath(cfg.output)
     else:
@@ -139,11 +155,12 @@ def get_output_filename(cfg: 'Config') -> str:
     return resolve_existing(cfg, fn)
 
 
-def validate_input_files(ffprobe_path: str, left: list[list[str]], right: list[list[str]], audio: list[list[str]], ask_match: bool, do_stab: bool):
-    left = [list(map(os.path.normpath, left_segment)) for left_segment in left]
-    right = [list(map(os.path.normpath, right_segment)) for right_segment in right]
-    audio = [list(map(os.path.normpath, audio_segment)) for audio_segment in audio]
+def validate_input_files(args: argparse.Namespace) -> Input:
+    left = [list(map(os.path.normpath, left_segment)) for left_segment in (args.left or [])]
+    right = [list(map(os.path.normpath, right_segment)) for right_segment in (args.right or [])]
+    audio = [list(map(os.path.normpath, audio_segment)) for audio_segment in (args.audio or [])]
 
+    do_stab = (args.stab is not None) or (args.stab_channel is not None)
     left_dir = right_dir = False
 
     if do_stab and not (len(left) == len(right) == 1):
@@ -181,16 +198,16 @@ def validate_input_files(ffprobe_path: str, left: list[list[str]], right: list[l
             if all([left_dir_segment, right_dir_segment]):
                 terminate("Both inputs can't be directories")
             if left_dir_segment:
-                closest, diff = find_closest(ffprobe_path, left_files[0], target := right_files[0])
+                closest, diff = find_closest(args.ffprobe_path, left_files[0], target := right_files[0])
                 left_files.clear()
                 left_files.append(closest)
             else:
-                closest, diff = find_closest(ffprobe_path, right_files[0], target := left_files[0])
+                closest, diff = find_closest(args.ffprobe_path, right_files[0], target := left_files[0])
                 right_files.clear()
                 right_files.append(closest)
             if closest:
                 prompt = f'Found file "{closest}" matching "{target}" with difference of {diff:.3f} seconds.'
-                if ask_match:
+                if args.ask_match:
                     print(f'{prompt} Continue? [Y/n]', end=None)
                     while True:
                         resp = getch()
@@ -214,19 +231,20 @@ def validate_input_files(ffprobe_path: str, left: list[list[str]], right: list[l
                 if os.path.isdir(fn):
                     terminate("Can't mix files and directories in inputs")
 
-        do_image = filetype.is_image(left_files[0])
-        if do_image and not filetype.is_image(right_files[0]):
-            terminate("Can't mix images and videos in inputs")
+        if do_image := filetype.is_image(left_files[0]):
+            if not filetype.is_image(right_files[0]):
+                terminate("Can't mix images and videos in inputs")
 
-        if (not first) and do_image:
-            terminate('Can generate only one image at a time')
+            if (not first) or len(left_files) > 1 or len(right_files) > 1:
+                terminate('Can generate only one image at a time')
 
         first = False
 
     if audio:
         if len(audio) != len(left):
-            terminate('If external audio is specified, the number of audio segments must match that of video segments!')
+            terminate('If external audio is specified, the number of audio segments must match that of video segments!\n'
+                      "In this case, to use audio embedded in video, specify --audio argument with no files.")
     else:
         audio = [[]] * len(left)
 
-    return do_image, left, right, audio
+    return Input(do_image, do_stab, [Input.Segment(*lra) for lra in zip(left, right, audio)])

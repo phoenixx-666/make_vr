@@ -79,21 +79,16 @@ class Config:
     @classmethod
     def from_args(cls) -> Self:
         args = cls._make_parser().parse_args()
-
-        do_stab = (args.stab is not None) or (args.stab_channel is not None)
-        do_image, left, right, audio = validate_input_files(args.ffprobe_path,
-                                                            args.left, args.right, args.audio or [],
-                                                            args.ask_match, do_stab)
-
-        am = _ArgsMultiplier(len(left), args)
+        inputs = validate_input_files(args)
+        am = _ArgsMultiplier(len(inputs.segments), args)
 
         segments = [
             cls.Segment(
-                left=left[i],
-                right=right[i],
-                audio=audio[i],
+                left=inputs.segments[i].left,
+                right=inputs.segments[i].right,
+                audio=inputs.segments[i].audio,
 
-                external_audio=bool(audio[i]),
+                external_audio=bool(inputs.segments[i].audio),
 
                 duration=am.multiply_arg('duration', None, i),
 
@@ -140,10 +135,10 @@ class Config:
 
             separate_audio=args.separate_audio,
 
-            do_stab=do_stab,
+            do_stab=inputs.do_stab,
 
             quality=args.quality,
-            do_image=do_image,
+            do_image=inputs.do_image,
 
             ffmpeg_path=args.ffmpeg_path,
             ffprobe_path=args.ffprobe_path,
