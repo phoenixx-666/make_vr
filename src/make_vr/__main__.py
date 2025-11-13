@@ -1,4 +1,4 @@
-if __name__ == '__main__':
+def main():
     from .config import Config
     cfg = Config.from_args()
 
@@ -8,3 +8,7 @@ if __name__ == '__main__':
     else:
         from .video import make_video
         make_video(cfg)
+
+
+if __name__ == '__main__':
+    main()

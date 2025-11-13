@@ -1,0 +1,40 @@
+[build-system]
+requires = ["hatchling"]
+build-backend = "hatchling.build"
+
+[project]
+name = "make_vr"
+version = "0.1.0"
+description = "Simple toolkit for making VR 3D videos from Dual-camera footage."
+readme = "README.md"
+requires-python = ">=3.11"
+dependencies = [
+  "exif>=1.6.1",
+  "filetype>=1.2.0",
+  "numpy>=2.3.4",
+  "pexpect>=4.9.0",
+  "scipy>=1.16.3",
+  "tqdm>=4.67.1",
+  "tzlocal>=5.3.1",
+]
+license = { file = "LICENSE" }
+authors = [
+  { name = "phoenixx-666", email = "phoenixx666@protonmail.com" }
+]
+keywords = ["vr", "virtual reality", "3D", "stereoscopy", "photo", "video"]
+classifiers = [
+  "Programming Language :: Python :: 3",
+  "License :: OSI Approved :: MIT License",
+  "Operating System :: OS Independent"
+]
+
+[project.optional-dependencies]
+win32 = [
+  "PyTaskbarProject==0.0.8", # https://github.com/N3RDIUM/PyTaskbar/releases/tag/0.0.8
+]
+
+[project.scripts]
+make_vr = "make_vr.__main__:main"
+
+[tool.hatch.build.targets.wheel]
+packages = ["src/make_vr"]
