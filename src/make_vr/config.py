@@ -170,9 +170,10 @@ class Config:
 
         arg_group = parser.add_argument_group('Video processing options')
         arg_group.add_argument('-f', '--fade', action='append', type=duration, nargs='+', help='Add fade effect in the beginning and the end of the video segment')
-        arg_group.add_argument('-c', '--channel', action='append', type=int, choices=[-1, 0, 1], help='Use audio from the video file segment for the given eye, or -1 for no audio')
+        arg_group.add_argument('-c', '--channel', action='append', type=int, choices=[-1, 0, 1],
+                               help='Use audio from the video file segment for the given eye, or -1 for no audio')
         arg_group.add_argument('-d', '--duration', action='append', type=duration, help='Maximum duration of the output video segment [seconds or h:m:s]')
-        arg_group.add_argument('--offset', action='append', type=duration, help='Extra offset for the cut video [seconds or h:m:s]')
+        arg_group.add_argument('--offset', action='append', type=duration, help='Extra offset for the cut video segment [seconds or h:m:s]')
         arg_group.add_argument('--override-offset', action='append', nargs=2, metavar=('INPUT', 'OFFSET'), help='Override offset on specified input of video segment')
         arg_group.add_argument('--trim', '-T', action='append', type=duration, help='Time to trim video segment from the beginning, after the videos are synchronized')
         arg_group.add_argument('--ultra-sync', '-u', action='append', type=int, nargs='?', const=_DEFAULT_USYNC,
@@ -190,7 +191,13 @@ class Config:
         arg_group.add_argument('--wav-duration', type=duration, metavar='DURATION',
                                help='Portion of sound to extract from left and right video that will be used in automatic synchronization')
 
-        arg_group = parser.add_argument_group('Video options')
+        arg_group = parser.add_argument_group('Video stabilization options')
+        arg_group.add_argument('--stab', type=str, metavar='ARGS', nargs='?', const='',
+                               help='Produce the stabilization file instead of video with vidstabdetect filter with optional extra ARGS')
+        arg_group.add_argument('--stab-channel', type=int, metavar='INDEX',
+                               help='Index of the input channel to produce stabilization file from')
+
+        arg_group = parser.add_argument_group('Video encoding options')
         arg_group.add_argument('--video-codec', '--vc', type=str, default=(DEFAULT := 'hevc_nvenc'),
                                help=f'Video codec (must be suitable for FFMpeg, default: {DEFAULT})')
         arg_group.add_argument('-b', '--bitrate', type=str, default='40M', help='Output video bitrate (Value must be compatible with ffmpeg)')
@@ -202,12 +209,8 @@ class Config:
         arg_group.add_argument('--audio-bitrate', '--ab', type=str, default=(DEFAULT := '192k'),
                                help=f'Audio bitrate (must be suitable for FFMpeg, default: {DEFAULT})')
         arg_group.add_argument('--separate-audio', '-A', action='store_true', help='Store audio as a separate wav file for further editing')
-        arg_group.add_argument('--stab', type=str, metavar='ARGS', nargs='?', const='',
-                               help='Produce the stabilization file instead of video with vidstabdetect filter with optional extra ARGS')
-        arg_group.add_argument('--stab-channel', type=int, metavar='INDEX',
-                               help='Index of the input channel to produce stabilization file from')
 
-        arg_group = parser.add_argument_group('Photo options')
+        arg_group = parser.add_argument_group('Photo encoding options')
         arg_group.add_argument('-q', '--quality', type=int, default=2, help='Output photo quality')
 
         arg_group = parser.add_argument_group('Other options')

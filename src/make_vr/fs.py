@@ -10,8 +10,6 @@ import os
 import subprocess as sp
 from typing import Any
 
-import filetype
-
 from .shell import terminate
 
 from typing import TYPE_CHECKING
