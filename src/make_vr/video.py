@@ -24,12 +24,32 @@ SIDE = 4096
 O_FOV = 180
 
 
-@dataclass
+@dataclass(frozen=True)
 class Metadata:
     fps: Fraction
     duration: float
     sample_rate: int
     channel_layout: str
+
+    def __init__(self, metadata: dict[str, Any]):
+        try:
+            streams = metadata['streams']
+            stream_type = 'video'
+            video_stream = next(filter(lambda stream: stream.get('codec_type') == stream_type, streams))
+            stream_type = 'audio'
+            audio_stream = next(filter(lambda stream: stream.get('codec_type') == stream_type, streams))
+
+            object.__setattr__(self, 'fps', Fraction(video_stream['r_frame_rate']))
+            object.__setattr__(self, 'duration', float(video_stream.get('duration', 0)) or \
+                sum([60.0 ** i * float(x) for i, x in enumerate(video_stream['tags']['DURATION'].split(':')[::-1])]))
+            object.__setattr__(self, 'sample_rate', int(audio_stream['sample_rate']))
+            object.__setattr__(self, 'channel_layout', audio_stream['channel_layout'])
+        except KeyError as exc:
+            terminate(f'Error reading metadata: lack of key "{exc.args[0]}"')
+        except StopIteration:
+            terminate(f'Unable to find {stream_type} stream')
+        except ZeroDivisionError:
+            terminate('Incorrect frame rate value')
 
 
 class PyTaskbarStub:
@@ -55,30 +75,6 @@ def d_to_hms(d: float) -> str:
     return f'{m:02d}:{s}'
 
 
-def get_metadata(metadata: dict[str, Any]) -> Metadata:
-    try:
-        streams = metadata['streams']
-        video_stream = next(filter(lambda stream: stream.get('codec_type') == 'video', streams))
-        audio_stream = next(filter(lambda stream: stream.get('codec_type') == 'audio', streams))
-
-        fps = Fraction(video_stream['r_frame_rate'])
-        duration = float(video_stream.get('duration', 0)) or \
-            sum([60.0 ** i * float(x) for i, x in enumerate(video_stream['tags']['DURATION'].split(':')[::-1])])
-
-        return Metadata(
-            fps = fps,
-            duration = duration,
-            sample_rate=int(audio_stream['sample_rate']),
-            channel_layout=audio_stream['channel_layout'],
-        )
-    except KeyError as exc:
-        terminate(f'Error reading metadata: lack of key "{exc.args[0]}"')
-    except StopIteration:
-        terminate('Unable to find stream')
-    except ZeroDivisionError:
-        terminate('Incorrect frame rate value')
-
-
 def make_video(cfg: Config):
     try:
         import tzlocal
@@ -89,8 +85,6 @@ def make_video(cfg: Config):
         tz = datetime.timezone.utc
         datetime_fmt = '%d %b %Y %H:%M:%S UTC'
         time_fmt = '%H:%M:%S UTC'
-
-    probe_ = lambda fn: probe(cfg.ffprobe_path, fn)
 
     out = get_output_filename(cfg)
 
@@ -105,7 +99,7 @@ def make_video(cfg: Config):
 
     segments = cfg.segments
 
-    metadata = [[list(map(get_metadata, map(probe_, files))) for files in inputs]
+    metadata = [[list(map(Metadata, map(lambda fn: probe(cfg.ffprobe_path, fn), files))) for files in inputs]
                  for inputs in ((segment.left, segment.right) for segment in segments)]
     fps = (base_metadata := metadata[0][0][0]).fps
     channel_layout = base_metadata.channel_layout

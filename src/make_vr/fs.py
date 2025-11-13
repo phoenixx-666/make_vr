@@ -7,10 +7,13 @@ import itertools
 import json
 from msvcrt import getch
 import os
+from pathlib import Path
 import subprocess as sp
+from tqdm import tqdm
 from typing import Any
 
 from .shell import terminate
+from .tools import with_each
 
 from typing import TYPE_CHECKING
 if TYPE_CHECKING:
@@ -59,24 +62,6 @@ def get_creation_date(ffprobe_path: str, fn: str) -> datetime:
         ...
 
     return None
-
-
-def find_closest(ffprobe_path: str, dir: str, reference: str) -> tuple[str | None, float]:
-    diff = float('inf')
-    closest = None
-
-    ref_date = get_creation_date(ffprobe_path, reference)
-    ref_ext = os.path.splitext(reference)[1].lower()
-
-    for file in (f for f in next(os.walk(dir))[2] if os.path.splitext(f)[1].lower() == ref_ext):
-        fn = os.path.join(dir, file)
-        date = get_creation_date(ffprobe_path, fn)
-        if not date:
-            continue
-        newdiff = abs(date - ref_date).total_seconds()
-        if newdiff < diff:
-            closest, diff = fn, newdiff
-    return closest, diff
 
 
 def rename(fn: str) -> str:
@@ -159,50 +144,103 @@ def validate_input_files(args: argparse.Namespace) -> Input:
     audio = [list(map(os.path.normpath, audio_segment)) for audio_segment in (args.audio or [])]
 
     do_stab = (args.stab is not None) or (args.stab_channel is not None)
-    left_dir = right_dir = False
+    left_is_dir = right_is_dir = False
 
     if do_stab and not (len(left) == len(right) == 1):
         terminate('Stabilization estimation should only be performed on single-segment videos')
 
     if len(left) != len(right):
-        left_dir = len(left) == 1 and len(left[0]) == 1 and os.path.isdir(left[0][0])
-        right_dir = len(right) == 1 and len(right[0]) == 1 and os.path.isdir(right[0][0])
-        if left_dir == right_dir:
-            if left_dir:
+        left_is_dir = len(left) == 1 and len(left[0]) == 1 and os.path.isdir(left[0][0])
+        right_is_dir = len(right) == 1 and len(right[0]) == 1 and os.path.isdir(right[0][0])
+        if left_is_dir == right_is_dir:
+            if left_is_dir:
                 terminate('If one of the inputs is a directory, it must be single')
             else:
                 terminate('If multiple segments are specified, the number of input sequences for left and right eye must be equal.\n'
                           'Or otherwise a single folder specified for the other eye.')
 
-        if left_dir:
+        if left_is_dir:
             left = [left[0].copy() for _ in range(len(right))]
-        elif right_dir:
+        elif right_is_dir:
             right = [right[0].copy() for _ in range(len(left))]
 
     for fn in itertools.chain(*left, *right, *audio):
         if not os.path.exists(fn):
             terminate(f'Input path {fn} does not exist!')
 
-    first = True
     do_image = False
 
-    for left_files, right_files in zip(left, right):
-        left_dir_segment = left_dir or os.path.isdir(left_files[0])
-        right_dir_segment = right_dir or os.path.isdir(right_files[0])
+    dir_segment: dict[int, tuple[str, bool]] = {}
+    dir_ext: dict[str, set[str]] = {}
 
-        if any([left_dir_segment, right_dir_segment]):
+    for i, (left_files, right_files) in enumerate(zip(left, right)):
+        left_segment_is_dir = left_is_dir or os.path.isdir(left_files[0])
+        right_segment_is_dir = right_is_dir or os.path.isdir(right_files[0])
+
+        if any([left_segment_is_dir, right_segment_is_dir]):
             if len(left_files) > 1 or len(right_files) > 1:
                 terminate('If a segment has a directory specified for one eye, other eye can have only one file')
-            if all([left_dir_segment, right_dir_segment]):
+            if all([left_segment_is_dir, right_segment_is_dir]):
                 terminate("Both inputs can't be directories")
-            if left_dir_segment:
-                closest, diff = find_closest(args.ffprobe_path, left_files[0], target := right_files[0])
-                left_files.clear()
-                left_files.append(closest)
+            if left_segment_is_dir:
+                dir_ext.setdefault(left_files[0], set()).add(os.path.splitext(right_files[0])[1].lower())
+                dir_segment[i] = (left_files[0], False)
             else:
-                closest, diff = find_closest(args.ffprobe_path, right_files[0], target := left_files[0])
-                right_files.clear()
-                right_files.append(closest)
+                dir_ext.setdefault(right_files[0], set()).add(os.path.splitext(left_files[0])[1].lower())
+                dir_segment[i] = (right_files[0], True)
+        elif any(map(os.path.isdir, itertools.chain(left_files, right_files))):
+            terminate("Can't mix files and directories in inputs")
+
+        if do_image := ((not left_segment_is_dir) and filetype.is_image(left_files[0])) or \
+                       ((not right_segment_is_dir) and filetype.is_image(right_files[0])):
+            if ((not left_segment_is_dir) and (not filetype.is_image(left_files[0]))) or \
+               ((not right_segment_is_dir) and (not filetype.is_image(right_files[0]))):
+                terminate("Can't mix images and videos in inputs")
+
+            if i or len(left_files) > 1 or len(right_files) > 1:
+                terminate('Can generate only one image at a time')
+
+    if audio:
+        if len(audio) != len(left):
+            terminate('If external audio is specified, the number of audio segments must match that of video segments!\n'
+                      "In this case, to use audio embedded in video, specify --audio argument with no files.")
+    else:
+        audio = [[]] * len(left)
+
+    if dir_segment:
+        dir_files: dict[str, list[tuple[str, datetime]]] = {}
+        for dir_name, right_is_dir in dir_segment.values():
+            try:
+                ext = dir_ext[dir_name]
+                file_list = [(str(Path(dir_name) / fn), None) for fn in next(os.walk(dir_name))[2]
+                             if os.path.splitext(fn)[1].lower() in ext]
+            except StopIteration:
+                terminate(f'Input directory "{dir_name}" does not exist!')
+            if not file_list:
+                terminate(f'Input directory "{dir_name}" does not contain suitable files!')
+            dir_files[dir_name] = file_list
+
+        pbar = tqdm(desc='Retrieving creation dates', total=sum(map(len, dir_files.values())))
+        for dir_name, (i, (file_name, _)) in itertools.chain.from_iterable(map(lambda fwd: with_each(fwd[0], enumerate(fwd[1])), dir_files.items())):
+            dir_files[dir_name][i] = (file_name, get_creation_date(args.ffprobe_path, file_name))
+            pbar.update()
+        pbar.close()
+
+        for dir_name, file_list in dir_files.items():
+            dir_files[dir_name] = list(filter(lambda item: item[1] is not None, file_list))
+
+        for i, (dir_name, right_is_dir) in dir_segment.items():
+            target = left[i][0] if right_is_dir else right[i][0]
+            target_date = get_creation_date(args.ffprobe_path, target)
+            if not target_date:
+                terminate(f'Unable to determine creation date for the file "{target}"')
+            diff = float('inf')
+            closest = None
+
+            for file_name, date in dir_files[dir_name]:
+                if (new_diff := abs((target_date - date).total_seconds())) < diff:
+                    closest, diff = file_name, new_diff
+
             if closest:
                 prompt = f'Found file "{closest}" matching "{target}" with difference of {diff:.3f} seconds.'
                 if args.ask_match:
@@ -221,28 +259,10 @@ def validate_input_files(args: argparse.Namespace) -> Input:
                             terminate('Bad unicode character input')
                 else:
                     print(prompt)
+
+                (right if right_is_dir else left)[i] = [closest]
             else:
-                ft = "image" if (do_image := filetype.is_image(left[0] or right[0])) else "video"
-                terminate(f'Unable to find corresponding {ft}')
-        else:
-            for fn in itertools.chain(left_files, right_files):
-                if os.path.isdir(fn):
-                    terminate("Can't mix files and directories in inputs")
-
-        if do_image := filetype.is_image(left_files[0]):
-            if not filetype.is_image(right_files[0]):
-                terminate("Can't mix images and videos in inputs")
-
-            if (not first) or len(left_files) > 1 or len(right_files) > 1:
-                terminate('Can generate only one image at a time')
-
-        first = False
-
-    if audio:
-        if len(audio) != len(left):
-            terminate('If external audio is specified, the number of audio segments must match that of video segments!\n'
-                      "In this case, to use audio embedded in video, specify --audio argument with no files.")
-    else:
-        audio = [[]] * len(left)
+                ft = 'image' if do_image else 'video'
+                terminate(f'Unable to find corresponding {ft} for the file "{target}"')
 
     return Input(do_image, do_stab, [Input.Segment(*lra) for lra in zip(left, right, audio)])
