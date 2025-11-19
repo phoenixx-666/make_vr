@@ -20,6 +20,9 @@ def make_image(cfg: Config):
         outputs=['-vframes', '1', '-update', '1', get_output_filename(cfg)]
     ))
 
+    if cfg.quality == 1:
+        ffmpeg_command.outputs[0].codecs.extend(['-qmin', '1'])
+
     if cfg.threads:
         ffmpeg_command.general_params.extend(['-threads', str(cfg.threads)])
     if cfg.overwrite or not cfg.do_print:

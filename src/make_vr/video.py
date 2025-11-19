@@ -24,7 +24,7 @@ SIDE = 4096
 O_FOV = 180
 
 
-@dataclass(frozen=True)
+@dataclass
 class Metadata:
     fps: Fraction
     duration: float
@@ -39,11 +39,11 @@ class Metadata:
             stream_type = 'audio'
             audio_stream = next(filter(lambda stream: stream.get('codec_type') == stream_type, streams))
 
-            object.__setattr__(self, 'fps', Fraction(video_stream['r_frame_rate']))
-            object.__setattr__(self, 'duration', float(video_stream.get('duration', 0)) or \
-                sum([60.0 ** i * float(x) for i, x in enumerate(video_stream['tags']['DURATION'].split(':')[::-1])]))
-            object.__setattr__(self, 'sample_rate', int(audio_stream['sample_rate']))
-            object.__setattr__(self, 'channel_layout', audio_stream['channel_layout'])
+            self.fps = Fraction(video_stream['r_frame_rate'])
+            self.duration = float(video_stream.get('duration', 0)) or \
+                sum([60.0 ** i * float(x) for i, x in enumerate(video_stream['tags']['DURATION'].split(':')[::-1])])
+            self.sample_rate = int(audio_stream['sample_rate'])
+            self.channel_layout = audio_stream['channel_layout']
         except KeyError as exc:
             terminate(f'Error reading metadata: lack of key "{exc.args[0]}"')
         except StopIteration:
@@ -142,9 +142,6 @@ def make_video(cfg: Config):
                 cut_index = 1
             else:
                 cut_index = -1
-            if cfg.get_offset:
-                print(f'Offset is {d_to_hms(time_diff)} (({fts(time_diff)} s), {cut_index})')
-                exit()
 
         if segment.extra_offset:
             time_diff += segment.extra_offset

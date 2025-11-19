@@ -17,7 +17,7 @@ from .tools import with_each
 
 from typing import TYPE_CHECKING
 if TYPE_CHECKING:
-    from .config import Config
+    from .config import Config, Defaults
 
 
 __all__ = ['Inputs', 'probe', 'get_output_filename', 'swap_extension',
@@ -138,10 +138,21 @@ def get_output_filename(cfg: Config) -> str:
     return resolve_existing(cfg, fn)
 
 
-def validate_input_files(args: argparse.Namespace) -> Input:
+def validate_input_files(args: argparse.Namespace, defaults: Defaults) -> Input:
     left = [list(map(os.path.normpath, left_segment)) for left_segment in (args.left or [])]
     right = [list(map(os.path.normpath, right_segment)) for right_segment in (args.right or [])]
     audio = [list(map(os.path.normpath, audio_segment)) for audio_segment in (args.audio or [])]
+
+    if not (left or right):
+        terminate('Must specify at least one input')
+    if not left:
+        if not defaults.left_dir:
+            terminate('No input specified for the left eye')
+        left = [[defaults.left_dir]]
+    elif not right:
+        if not defaults.right_dir:
+            terminate('No input specified for the right eye')
+        right = [[defaults.right_dir]]
 
     do_stab = (args.stab is not None) or (args.stab_channel is not None)
     left_is_dir = right_is_dir = False
