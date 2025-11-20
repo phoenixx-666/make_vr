@@ -9,6 +9,7 @@ from typing import Any, ClassVar, Self
 
 from .fs import validate_input_files
 from .shell import terminate
+from .tools import make_object, prop_nestr
 
 
 __all__ = ['Config', 'Defaults', 'duration']
@@ -88,30 +89,25 @@ class Defaults:
     video_filter: list[str] | None
     audio_filter: list[str] | None
 
-    @staticmethod
-    def _object(properties: dict[str, dict]):
-        return {'type': 'object', 'additionalProperties': False, 'properties': properties,}
-
     _nnint: ClassVar[dict] = {'type': 'integer', 'minimum': 0,}
-    _nestr: ClassVar[dict] = {'type': 'string', 'minLength': 1,}
     _angle: ClassVar[dict] = {'type': 'number', 'minimum': 0.0, 'maximum': 360.0,}
     _quality: ClassVar[dict] = {'type': 'integer', 'minimum': 1, 'maximum': 31,}
-    _nestr_array: ClassVar[dict] = {'type': 'array', 'items': _nestr,}
-    _schema: ClassVar[dict] = _object({
-        'defaults': _object({
-            'options': _object({ 'threads': _nnint, }),
-            'inputs': _object({'left-dir': _nestr, 'right-dir': _nestr,}),
-            'encoding': _object({
-                'bitrate': _nestr,
-                'video-codec': _nestr,
-                'preset': _nestr,
-                'pixel-format': _nestr,
-                'audio-codec': _nestr,
-                'audio-bitrate': _nestr,
+    _nestr_array: ClassVar[dict] = {'type': 'array', 'items': prop_nestr,}
+    _schema: ClassVar[dict] = make_object({
+        'defaults': make_object({
+            'options': make_object({ 'threads': _nnint, }),
+            'inputs': make_object({'left-dir': prop_nestr, 'right-dir': prop_nestr,}),
+            'encoding': make_object({
+                'bitrate': prop_nestr,
+                'video-codec': prop_nestr,
+                'preset': prop_nestr,
+                'pixel-format': prop_nestr,
+                'audio-codec': prop_nestr,
+                'audio-bitrate': prop_nestr,
                 'image-quality': _quality,
             }),
-            'camera': _object({'ihfov': _angle, 'ivfov': _angle,}),
-            'processing': _object({'video-filter': _nestr_array, 'audio-filter': _nestr_array,})
+            'camera': make_object({'ihfov': _angle, 'ivfov': _angle,}),
+            'processing': make_object({'video-filter': _nestr_array, 'audio-filter': _nestr_array,})
         })
     })
 
@@ -239,7 +235,7 @@ class Config:
                 with open(config_name, 'rb') as f:
                     config_data = tomllib.load(f)
             except (IOError, OSError, tomllib.TOMLDecodeError) as e:
-                terminate(f'Error while reading config: {e.msg}')
+                terminate(f'Error while reading config: {e}')
             DEFAULTS.load(config_data)
 
         inputs = validate_input_files(args, DEFAULTS)

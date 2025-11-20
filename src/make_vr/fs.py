@@ -12,6 +12,7 @@ import subprocess as sp
 from tqdm import tqdm
 from typing import Any
 
+from .cache import Cache
 from .shell import terminate
 from .tools import with_each
 
@@ -219,6 +220,8 @@ def validate_input_files(args: argparse.Namespace, defaults: Defaults) -> Input:
         audio = [[]] * len(left)
 
     if dir_segment:
+        cache = Cache()
+
         dir_files: dict[str, list[tuple[str, datetime]]] = {}
         for dir_name, right_is_dir in dir_segment.values():
             try:
@@ -233,9 +236,20 @@ def validate_input_files(args: argparse.Namespace, defaults: Defaults) -> Input:
 
         pbar = tqdm(desc='Retrieving creation dates', total=sum(map(len, dir_files.values())))
         for dir_name, (i, (file_name, _)) in itertools.chain.from_iterable(map(lambda fwd: with_each(fwd[0], enumerate(fwd[1])), dir_files.items())):
-            dir_files[dir_name][i] = (file_name, get_creation_date(args.ffprobe_path, file_name))
+            mod_ts = os.path.getmtime(file_name)
+            mod_date = datetime.fromtimestamp(mod_ts)
+            if (file_data := cache.get(file_name)) and file_data.modified_date == mod_date:
+                creation_date = file_data.creation_date
+            else:
+                creation_date = get_creation_date(args.ffprobe_path, file_name)
+                cache.set(file_name, mod_date, creation_date)
+
+            dir_files[dir_name][i] = (file_name, creation_date)
             pbar.update()
         pbar.close()
+
+        cache.cleanup()
+        cache.save_if_updated()
 
         for dir_name, file_list in dir_files.items():
             dir_files[dir_name] = list(filter(lambda item: item[1] is not None, file_list))
