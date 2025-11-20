@@ -165,7 +165,7 @@ def make_video(cfg: Config):
         inputs_str = []
 
         if cfg.do_stab:
-            for k, input in enumerate((segment.left, segment.right)[segment.stab_channel], start=input_index):
+            for k, input in enumerate((segment.left, segment.right)[cfg.stab_channel], start=input_index):
                 ffmpeg_command.inputs.append(['-i', input])
                 inputs.append(k)
                 inputs_str.append(f'{k}:v:0')
@@ -177,7 +177,7 @@ def make_video(cfg: Config):
             filters.append(Filter('concat', n=len(inputs), v=1, a=0))
 
             offset = segment.trim
-            if cut_index == segment.stab_channel:
+            if cut_index == cfg.stab_channel:
                 offset += time_diff
             if offset > 0.0:
                 if segment.ultra_sync:
@@ -194,8 +194,8 @@ def make_video(cfg: Config):
 
             filters.append(Filter('trim', duration=duration))
             filters.append(vsd := Filter('vidstabdetect', result=out, fileformat='ascii'))
-            if segment.stab_args:
-                vsd.add_raw(segment.stab_args)
+            if cfg.stab_args:
+                vsd.add_raw(cfg.stab_args)
             filter_seqs.append(FilterSeq(inputs_str, [], filters))
 
             input_index += len(inputs)

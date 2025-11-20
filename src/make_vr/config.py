@@ -209,13 +209,13 @@ class Config:
         fill_end: bool
         wav_duration: float | None
 
-        stab_args: str | None
-        stab_channel: int = 0
 
     segments: list[Segment]
     output: str | None
     separate_audio: bool
     do_stab: bool
+    stab_args: str | None
+    stab_channel: int = 0
 
     @classmethod
     def from_args(cls) -> Self:
@@ -267,8 +267,6 @@ class Config:
                 fill_end=am.multiply_arg('fill-end', False, i),
                 wav_duration=am.multiply_arg('wav-duration', None, i),
 
-                stab_args=args.stab or None,
-                stab_channel=0 if (args.stab_channel is None) else args.stab_channel,
             )
             for i in range(am.num_segments)
         ]
@@ -294,6 +292,8 @@ class Config:
             separate_audio=args.separate_audio,
 
             do_stab=inputs.do_stab,
+            stab_args=args.stab if args.stab is not ... else None,
+            stab_channel=0 if (args.stab_channel is None) else args.stab_channel,
 
             quality=args.quality or DEFAULTS.image_quality,
             do_image=inputs.do_image,
@@ -352,9 +352,9 @@ class Config:
                                help='Portion of sound to extract from left and right video that will be used in automatic synchronization')
 
         arg_group = parser.add_argument_group('Video stabilization options')
-        arg_group.add_argument('--stab', type=nestr, metavar='ARGS', nargs='?', const='',
+        arg_group.add_argument('--stab', type=nestr, metavar='ARGS', nargs='?', const=...,
                                help='Produce the stabilization file instead of video with vidstabdetect filter with optional extra ARGS')
-        arg_group.add_argument('--stab-channel', type=nestr, metavar='INDEX',
+        arg_group.add_argument('--stab-channel', type=int, choices=[0, 1], metavar='INDEX',
                                help='Index of the input channel to produce stabilization file from')
 
         arg_group = parser.add_argument_group('Video encoding options')

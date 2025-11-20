@@ -80,5 +80,5 @@ class Cache:
             print(f'There was an error while saving cache: {e}')
 
     _schema: ClassVar[dict] = make_object(pattern_properties={
-        r'.*' : make_object({ 'm': prop_nestr, 'c': prop_nestr,}, required=['m'])
+        r'.+' : make_object({ 'm': prop_nestr, 'c': prop_nestr,}, required=['m'])
     })

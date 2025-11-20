@@ -107,32 +107,21 @@ def get_output_filename(cfg: Config) -> str:
     if cfg.output:
         fn = os.path.normpath(cfg.output)
     else:
-
         ext = None
+        fn_parts = []
 
         if cfg.do_stab:
             ext = '.trf'
 
-        fn_parts = []
-
         for left, right in ((segment.left, segment.right) for segment in cfg.segments):
-            multiple = False
+            if ext is None:
+                ext = os.path.splitext(os.path.basename(left[0]))[1]
 
-            if len(left) > 1:
-                if ext is None:
-                    ext = os.path.splitext(os.path.basename(left[0]))[1]
-                basename = '_'.join(map(lambda fn: os.path.splitext(os.path.basename(fn))[0], left))
-                multiple = True
-            else:
-                basename, ext = os.path.splitext(os.path.basename(left[0]))
+            basename_l = '_'.join(map(lambda fn: os.path.splitext(os.path.basename(fn))[0], left))
+            basename_r = '_'.join(map(lambda fn: os.path.splitext(os.path.basename(fn))[0], right))
+            multiple = (len(left) + len(right)) > 2
 
-            if len(right) > 1:
-                basename2 = '_'.join(map(lambda fn: os.path.splitext(os.path.basename(fn))[0], right))
-                multiple = True
-            else:
-                basename2 = os.path.splitext(os.path.basename(right[0]))[0]
-
-            fn_parts.append(f'{basename}{"__" if multiple else "_"}{basename2}')
+            fn_parts.append(f'{basename_l}{"__" if multiple else "_"}{basename_r}')
 
         fn = f'{"+".join(fn_parts)}{ext.lower()}'
 
