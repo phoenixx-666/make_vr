@@ -201,7 +201,10 @@ def make_video(cfg: Config):
             input_index += len(inputs)
         else:
             suffix = '' if len(segments) == 1 else str(segment_index)
-            ffmpeg_command.inputs.append(['-f', 'lavfi', '-i', Filter('color', color='black', s=f'{SIDE * 2}x{SIDE}', r=fps).render()])
+            ffmpeg_command.inputs.append(['-f', 'lavfi', '-i', Filter('color',
+                                                                      color='black',
+                                                                      s=f'{(cfg.ow or SIDE) * 2}x{cfg.oh or SIDE}',
+                                                                      r=fps).render()])
 
             all_inputs = (left_inputs, right_inputs) = [], []
             audio_inputs = []
@@ -247,7 +250,14 @@ def make_video(cfg: Config):
                         all_input_str[i].append(f'filler{suffix}')
                         all_filters[i][0].kw_params['n'] += 1
 
-            v360 = Filter('v360', 'fisheye', 'e', 'lanc', iv_fov=segment.iv_fov, ih_fov=segment.ih_fov, h_fov=O_FOV, v_fov=O_FOV, alpha_mask=1, w=SIDE, h=SIDE)
+            v360 = Filter('v360', 'fisheye', cfg.of, 'lanc',
+                          iv_fov=segment.iv_fov,
+                          ih_fov=segment.ih_fov,
+                          h_fov=cfg.oh_fov,
+                          v_fov=cfg.ov_fov,
+                          alpha_mask=1,
+                          w=cfg.ow or SIDE,
+                          h=cfg.oh or SIDE)
             filters = [Filter(filter_str) for filter_str in segment.extra_video_filter] + [v360]
 
             filter_seqs.extend([
@@ -325,6 +335,8 @@ def make_video(cfg: Config):
             video_output.codecs.extend(['-vb', cfg.bitrate])
         video_output.codecs.extend(['-pix_fmt', cfg.pixel_format])
         video_output.codecs.extend(['-preset', cfg.preset])
+        if cfg.x264_frame_packing:
+            video_output.codecs.extend(['-x264-params', 'frame_packing=3'])
 
         if any_do_audio and not cfg.separate_audio:
             video_output.codecs.extend(['-c:a', cfg.audio_codec, '-ab', cfg.audio_bitrate])

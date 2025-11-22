@@ -29,14 +29,22 @@ def make_image(cfg: Config):
         ffmpeg_command.general_params.extend(['-y'])
 
     ffmpeg_command.inputs.extend([
-        ['-f', 'lavfi', '-i', Filter('color', color='black', s=f'{SIDE * 2}x{SIDE}').render()],
+        ['-f', 'lavfi', '-i', Filter('color',
+                                     color='black',
+                                     s=f'{(cfg.ow or SIDE) * 2}x{cfg.oh or SIDE}').render()],
         ['-i', (segment := cfg.segments[0]).left[0]],
         ['-i', segment.right[0]],
     ])
 
     filters = [Filter(filter_str) for filter_str in segment.extra_video_filter]
-    filters.append(Filter('v360', 'fisheye', 'e', 'lanc', iv_fov=segment.iv_fov, ih_fov=segment.ih_fov,
-                          h_fov=O_FOV, v_fov=O_FOV, alpha_mask=1, w=SIDE, h=SIDE))
+    filters.append(Filter('v360', 'fisheye', cfg.of, 'lanc',
+                          iv_fov=segment.iv_fov,
+                          ih_fov=segment.ih_fov,
+                          h_fov=cfg.oh_fov,
+                          v_fov=cfg.ov_fov,
+                          alpha_mask=1,
+                          w=cfg.ow or SIDE,
+                          h=cfg.oh or SIDE))
     ffmpeg_command.filter_graph = FilterGraph([
         FilterSeq(['1:v:0'], ['left'], filters),
         FilterSeq(['2:v:0'], ['right'], filters),

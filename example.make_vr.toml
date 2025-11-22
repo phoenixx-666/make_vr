@@ -12,6 +12,7 @@ bitrate="40M"
 video-codec="hevc_nvenc"
 preset="slow"
 pixel-format="yuv420p"
+x264-frame-packing=false
 audio-codec="aac"
 audio-bitrate="256k"
 image-quality=2
@@ -23,3 +24,10 @@ ivfov=108.0
 [defaults.processing]
 video-filter=["hqdn3d=10"]
 audio-filter=[]
+
+[defaults.visuals]
+ohfov=180.0
+ovfov=180.0
+ow=4096
+oh=4096
+of="e"

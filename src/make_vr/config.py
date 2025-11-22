@@ -79,6 +79,7 @@ class Defaults:
     video_codec: str | None
     preset: str | None
     pixel_format: str | None
+    x264_frame_packing: bool | None
     audio_codec: str | None
     audio_bitrate: str | None
     image_quality: int | None
@@ -89,7 +90,14 @@ class Defaults:
     video_filter: list[str] | None
     audio_filter: list[str] | None
 
+    ohfov: float
+    ovfov: float
+    ow: int | None
+    oh: int | None
+    of: str
+
     _nnint: ClassVar[dict] = {'type': 'integer', 'minimum': 0,}
+    _pint: ClassVar[dict] = {'type': 'integer', 'minimum': 1,}
     _angle: ClassVar[dict] = {'type': 'number', 'minimum': 0.0, 'maximum': 360.0,}
     _quality: ClassVar[dict] = {'type': 'integer', 'minimum': 1, 'maximum': 31,}
     _nestr_array: ClassVar[dict] = {'type': 'array', 'items': prop_nestr,}
@@ -102,13 +110,15 @@ class Defaults:
                 'video-codec': prop_nestr,
                 'preset': prop_nestr,
                 'pixel-format': prop_nestr,
+                'x264-frame-packing': {'type': 'boolean'},
                 'audio-codec': prop_nestr,
                 'audio-bitrate': prop_nestr,
                 'image-quality': _quality,
             }),
             'camera': make_object({'ihfov': _angle, 'ivfov': _angle,}),
-            'processing': make_object({'video-filter': _nestr_array, 'audio-filter': _nestr_array,})
-        })
+            'processing': make_object({'video-filter': _nestr_array, 'audio-filter': _nestr_array,}),
+            'visuals': make_object({'ohfov': _angle, 'ovfov': _angle, 'ow': _pint, 'oh': _pint, 'of': prop_nestr,}),
+        }),
     })
 
     def get(self, attr: str, value: Any) -> Any:
@@ -148,6 +158,7 @@ DEFAULTS = Defaults(
     video_codec='hevc_nvenc',
     preset='slow',
     pixel_format='yuv420p',
+    x264_frame_packing=False,
     audio_codec='aac',
     audio_bitrate='256k',
     image_quality=2,
@@ -157,6 +168,12 @@ DEFAULTS = Defaults(
 
     video_filter=[],
     audio_filter=[],
+
+    ohfov=180.0,
+    ovfov=180.0,
+    ow=None,
+    oh=None,
+    of='e',
 )
 
 
@@ -173,6 +190,7 @@ class Config:
     video_codec: str
     preset: str
     pixel_format: str
+    x264_frame_packing: bool
     audio_codec: str
     audio_bitrate: str
 
@@ -209,13 +227,18 @@ class Config:
         fill_end: bool
         wav_duration: float | None
 
-
     segments: list[Segment]
     output: str | None
     separate_audio: bool
     do_stab: bool
     stab_args: str | None
-    stab_channel: int = 0
+    stab_channel: int
+
+    oh_fov: float
+    ov_fov: float
+    ow: int | None
+    oh: int | None
+    of: str
 
     @classmethod
     def from_args(cls) -> Self:
@@ -283,6 +306,7 @@ class Config:
             video_codec=args.video_codec or DEFAULTS.video_codec,
             preset=args.preset or DEFAULTS.preset,
             pixel_format=args.pixel_format or DEFAULTS.pixel_format,
+            x264_frame_packing=args.x264_frame_packing or DEFAULTS.x264_frame_packing,
             audio_codec=args.audio_codec or DEFAULTS.audio_codec,
             audio_bitrate=args.audio_bitrate or DEFAULTS.audio_bitrate,
 
@@ -297,6 +321,12 @@ class Config:
 
             quality=args.quality or DEFAULTS.image_quality,
             do_image=inputs.do_image,
+
+            oh_fov=args.ohfov or DEFAULTS.ohfov,
+            ov_fov=args.ovfov or DEFAULTS.ohfov,
+            ow=args.ow or DEFAULTS.ow,
+            oh=args.oh or DEFAULTS.oh,
+            of=args.of or DEFAULTS.of,
 
             ffmpeg_path=args.ffmpeg_path,
             ffprobe_path=args.ffprobe_path,
@@ -325,8 +355,8 @@ class Config:
         parser.add_argument('-p', '--print', type=nnint, nargs='?', const=0, metavar='line_width', help='Only print ffmpeg command without executing it')
 
         arg_group = parser.add_argument_group('Camera options')
-        arg_group.add_argument('--ihfov', action='append', type=rngfloat(0.0, 360.0), help='Horizontal FOV of an input fisheye image')
-        arg_group.add_argument('--ivfov', action='append', type=rngfloat(0.0, 360.0), help='Vertical FOV of an input fisheye image')
+        arg_group.add_argument('--ihfov', action='append', type=rngfloat(0.0, 360.0), help='Horizontal FOV of an input fisheye visual')
+        arg_group.add_argument('--ivfov', action='append', type=rngfloat(0.0, 360.0), help='Vertical FOV of an input fisheye visual')
 
         arg_group = parser.add_argument_group('Video processing options')
         arg_group.add_argument('-f', '--fade', action='append', type=duration, nargs='+', help='Add fade effect in the beginning and the end of the video segment')
@@ -360,18 +390,26 @@ class Config:
         arg_group = parser.add_argument_group('Video encoding options')
         arg_group.add_argument('--video-codec', '--vc', type=nestr,
                                help=f'Video codec (must be suitable for FFMpeg, default: {DEFAULTS.video_codec})')
-        arg_group.add_argument('-b', '--bitrate', type=nestr, default='40M', help='Output video bitrate (Value must be compatible with ffmpeg)')
+        arg_group.add_argument('-b', '--bitrate', type=nestr, help=f'Output video bitrate (Value must be compatible with FFMpeg, default: {DEFAULTS.bitrate})')
         arg_group.add_argument('--preset', type=nestr, help=f'Encoding preset (must be suitable for FFMpeg, default: {DEFAULTS.preset})')
         arg_group.add_argument('--pixel-format', '--pf', type=nestr,
                                help=f'Pixel format codec (must be suitable for FFMpeg, default: {DEFAULTS.pixel_format})')
+        arg_group.add_argument('--x264-frame-packing', '--x264fp', action='store_true', help='Apply x264 frame packing')
         arg_group.add_argument('--audio-codec', '--ac', type=nestr,
                                help=f'Audio codec (must be suitable for FFMpeg, default: {DEFAULTS.audio_codec})')
         arg_group.add_argument('--audio-bitrate', '--ab', type=nestr,
                                help=f'Audio bitrate (must be suitable for FFMpeg, default: {DEFAULTS.audio_bitrate})')
         arg_group.add_argument('--separate-audio', '-A', action='store_true', help='Store audio as a separate wav file for further editing')
 
-        arg_group = parser.add_argument_group('Photo encoding options')
-        arg_group.add_argument('-q', '--quality', type=rngint(1, 31), default=2, help=f'Output photo quality, default: {DEFAULTS.image_quality}')
+        arg_group = parser.add_argument_group('Image encoding options')
+        arg_group.add_argument('-q', '--quality', type=rngint(1, 31), help=f'Output image quality, default: {DEFAULTS.image_quality}')
+
+        arg_group = parser.add_argument_group('Visual format options')
+        arg_group.add_argument('--ohfov', type=rngfloat(0.0, 360.0), help='Horizontal FOV of the output visual')
+        arg_group.add_argument('--ovfov', type=rngfloat(0.0, 360.0), help='Vertical FOV of the output visual')
+        arg_group.add_argument('--ow', type=rngint(lower=1), help='Horizontal resolution of the single-eye part of the visual')
+        arg_group.add_argument('--oh', type=rngint(lower=1), help='Vertical resolution of the single-eye part of the visual')
+        arg_group.add_argument('--of', type=nestr, help='Output format of the visual (equirectangular, flat, etc...)')
 
         arg_group = parser.add_argument_group('Other options')
         arg_group.add_argument('--ffmpeg-path', type=nestr, default='ffmpeg', help='Path to the ffmpeg executable')
