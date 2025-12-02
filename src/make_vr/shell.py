@@ -77,5 +77,5 @@ def print_command(part1: list[str], fg: str, part2: list[str]):
 
 
 def terminate(msg: str, exit_code=1):
-    print(msg)
+    sys.stderr.write(f'\x1b[31m{msg}\x1b[0m\n')
     exit(exit_code)

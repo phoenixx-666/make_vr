@@ -13,15 +13,16 @@ from tqdm import tqdm
 from typing import Any
 
 from .cache import Cache
+from .config import Config
 from .shell import terminate
 from .tools import with_each
 
 from typing import TYPE_CHECKING
 if TYPE_CHECKING:
-    from .config import Config, Defaults
+    from .task import Task
 
 
-__all__ = ['Inputs', 'probe', 'get_output_filename', 'swap_extension',
+__all__ = ['Input', 'probe', 'get_output_filename', 'swap_extension',
            'resolve_existsing', 'find_closest', 'validate_input_files']
 
 
@@ -73,11 +74,11 @@ def rename(fn: str) -> str:
     return res
 
 
-def resolve_existing(cfg: Config, fn: str) -> str:
+def resolve_existing(task: Task, fn: str) -> str:
     if os.path.exists(fn):
-        if cfg.rename:
+        if task.rename:
             fn = rename(fn)
-        elif not (cfg.do_print or cfg.overwrite):
+        elif not (task.do_print or task.overwrite):
             print(f'File "{fn}" already exists. Overwrite? [y/N/r]', end=None)
             while True:
                 resp = getch()
@@ -103,17 +104,17 @@ def swap_extension(fn: str, new_ext: str) -> str:
     return f'{os.path.splitext((fn))[0]}{new_ext}'
 
 
-def get_output_filename(cfg: Config) -> str:
-    if cfg.output:
-        fn = os.path.normpath(cfg.output)
+def get_output_filename(task: Task) -> str:
+    if task.output:
+        fn = os.path.normpath(task.output)
     else:
         ext = None
         fn_parts = []
 
-        if cfg.do_stab:
+        if task.do_stab:
             ext = '.trf'
 
-        for left, right in ((segment.left, segment.right) for segment in cfg.segments):
+        for left, right in ((segment.left, segment.right) for segment in task.segments):
             if ext is None:
                 ext = os.path.splitext(os.path.basename(left[0]))[1]
 
@@ -125,24 +126,25 @@ def get_output_filename(cfg: Config) -> str:
 
         fn = f'{"+".join(fn_parts)}{ext.lower()}'
 
-    return resolve_existing(cfg, fn)
+    return resolve_existing(task, fn)
 
 
-def validate_input_files(args: argparse.Namespace, defaults: Defaults) -> Input:
+def validate_input_files(args: argparse.Namespace) -> Input:
     left = [list(map(os.path.normpath, left_segment)) for left_segment in (args.left or [])]
     right = [list(map(os.path.normpath, right_segment)) for right_segment in (args.right or [])]
     audio = [list(map(os.path.normpath, audio_segment)) for audio_segment in (args.audio or [])]
 
     if not (left or right):
         terminate('Must specify at least one input')
+
     if not left:
-        if not defaults.left_dir:
+        if not Config().inputs.left_dir:
             terminate('No input specified for the left eye')
-        left = [[defaults.left_dir]]
+        left = [[Config().inputs.left_dir]]
     elif not right:
-        if not defaults.right_dir:
+        if not Config().inputs.right_dir:
             terminate('No input specified for the right eye')
-        right = [[defaults.right_dir]]
+        right = [[Config().inputs.right_dir]]
 
     do_stab = (args.stab is not None) or (args.stab_channel is not None)
     left_is_dir = right_is_dir = False
@@ -209,8 +211,6 @@ def validate_input_files(args: argparse.Namespace, defaults: Defaults) -> Input:
         audio = [[]] * len(left)
 
     if dir_segment:
-        cache = Cache()
-
         dir_files: dict[str, list[tuple[str, datetime]]] = {}
         for dir_name, right_is_dir in dir_segment.values():
             try:
@@ -227,18 +227,18 @@ def validate_input_files(args: argparse.Namespace, defaults: Defaults) -> Input:
         for dir_name, (i, (file_name, _)) in itertools.chain.from_iterable(map(lambda fwd: with_each(fwd[0], enumerate(fwd[1])), dir_files.items())):
             mod_ts = os.path.getmtime(file_name)
             mod_date = datetime.fromtimestamp(mod_ts)
-            if (file_data := cache.get(file_name)) and file_data.modified_date == mod_date:
+            if (file_data := Cache().get_match(file_name)) and file_data.modified_date == mod_date:
                 creation_date = file_data.creation_date
             else:
                 creation_date = get_creation_date(args.ffprobe_path, file_name)
-                cache.set(file_name, mod_date, creation_date)
+                Cache().set_match(file_name, mod_date, creation_date)
 
             dir_files[dir_name][i] = (file_name, creation_date)
             pbar.update()
         pbar.close()
 
-        cache.cleanup()
-        cache.save_if_updated()
+        Cache().cleanup()
+        Cache().save_if_updated()
 
         for dir_name, file_list in dir_files.items():
             dir_files[dir_name] = list(filter(lambda item: item[1] is not None, file_list))

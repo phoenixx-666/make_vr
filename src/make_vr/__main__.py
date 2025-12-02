@@ -1,13 +1,13 @@
 def main():
-    from .config import Config
-    cfg = Config.from_args()
+    from .task import Task
+    task = Task.from_args()
 
-    if cfg.do_image:
+    if task.do_image:
         from .image import make_image
-        make_image(cfg)
+        make_image(task)
     else:
         from .video import make_video
-        make_video(cfg)
+        make_video(task)
 
 
 if __name__ == '__main__':

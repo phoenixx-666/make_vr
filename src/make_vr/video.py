@@ -11,7 +11,7 @@ import pexpect.popen_spawn
 from tqdm import tqdm
 
 from .audio import get_samples, find_offset
-from .config import Config
+from .task import Task
 from .filters import Filter, FilterSeq, FilterGraph, fts
 from .fs import probe, get_output_filename, resolve_existing, swap_extension
 from .shell import FFMpegCommand, terminate
@@ -75,7 +75,7 @@ def d_to_hms(d: float) -> str:
     return f'{m:02d}:{s}'
 
 
-def make_video(cfg: Config):
+def make_video(task: Task):
     try:
         import tzlocal
         tz = tzlocal.get_localzone()
@@ -86,20 +86,20 @@ def make_video(cfg: Config):
         datetime_fmt = '%d %b %Y %H:%M:%S UTC'
         time_fmt = '%H:%M:%S UTC'
 
-    out = get_output_filename(cfg)
+    out = get_output_filename(task)
 
-    if any(segment.do_audio for segment in cfg.segments) and cfg.separate_audio:
-        out_wav = resolve_existing(cfg, swap_extension(out, 'wav'))
+    if any(segment.do_audio for segment in task.segments) and task.separate_audio:
+        out_wav = resolve_existing(task, swap_extension(out, 'wav'))
 
-    ffmpeg_command = FFMpegCommand(cfg.ffmpeg_path)
-    if cfg.threads:
-        ffmpeg_command.general_params.extend(['-threads', str(cfg.threads)])
-    if cfg.overwrite or not cfg.do_print:
+    ffmpeg_command = FFMpegCommand(task.ffmpeg_path)
+    if task.threads:
+        ffmpeg_command.general_params.extend(['-threads', str(task.threads)])
+    if task.overwrite or not task.do_print:
         ffmpeg_command.general_params.extend(['-y'])
 
-    segments = cfg.segments
+    segments = task.segments
 
-    metadata = [[list(map(Metadata, map(lambda fn: probe(cfg.ffprobe_path, fn), files))) for files in inputs]
+    metadata = [[list(map(Metadata, map(lambda fn: probe(task.ffprobe_path, fn), files))) for files in inputs]
                  for inputs in ((segment.left, segment.right) for segment in segments)]
     fps = (base_metadata := metadata[0][0][0]).fps
     channel_layout = base_metadata.channel_layout
@@ -132,8 +132,8 @@ def make_video(cfg: Config):
             else:
                 wav_duration = abs(d_l - d_r) + 60.0
             print(f'wav_duration={d_to_hms(wav_duration)} ({fts(wav_duration)} s)')
-            left_a = get_samples(cfg, segment, 'left', wav_duration, sample_rate)
-            right_a = get_samples(cfg, segment, 'right', wav_duration, sample_rate)
+            left_a = get_samples(task, segment, 'left', wav_duration, sample_rate)
+            right_a = get_samples(task, segment, 'right', wav_duration, sample_rate)
             time_diff = find_offset(left_a, right_a, sample_rate)
             if time_diff < 0.0:
                 time_diff = -time_diff
@@ -164,8 +164,8 @@ def make_video(cfg: Config):
         inputs = []
         inputs_str = []
 
-        if cfg.do_stab:
-            for k, input in enumerate((segment.left, segment.right)[cfg.stab_channel], start=input_index):
+        if task.do_stab:
+            for k, input in enumerate((segment.left, segment.right)[task.stab_channel], start=input_index):
                 ffmpeg_command.inputs.append(['-i', input])
                 inputs.append(k)
                 inputs_str.append(f'{k}:v:0')
@@ -177,7 +177,7 @@ def make_video(cfg: Config):
             filters.append(Filter('concat', n=len(inputs), v=1, a=0))
 
             offset = segment.trim
-            if cut_index == cfg.stab_channel:
+            if cut_index == task.stab_channel:
                 offset += time_diff
             if offset > 0.0:
                 if segment.ultra_sync:
@@ -194,8 +194,8 @@ def make_video(cfg: Config):
 
             filters.append(Filter('trim', duration=duration))
             filters.append(vsd := Filter('vidstabdetect', result=out, fileformat='ascii'))
-            if cfg.stab_args:
-                vsd.add_raw(cfg.stab_args)
+            if task.stab_args:
+                vsd.add_raw(task.stab_args)
             filter_seqs.append(FilterSeq(inputs_str, [], filters))
 
             input_index += len(inputs)
@@ -203,7 +203,7 @@ def make_video(cfg: Config):
             suffix = '' if len(segments) == 1 else str(segment_index)
             ffmpeg_command.inputs.append(['-f', 'lavfi', '-i', Filter('color',
                                                                       color='black',
-                                                                      s=f'{(cfg.ow or SIDE) * 2}x{cfg.oh or SIDE}',
+                                                                      s=f'{(task.ow or SIDE) * 2}x{task.oh or SIDE}',
                                                                       r=fps).render()])
 
             all_inputs = (left_inputs, right_inputs) = [], []
@@ -250,14 +250,14 @@ def make_video(cfg: Config):
                         all_input_str[i].append(f'filler{suffix}')
                         all_filters[i][0].kw_params['n'] += 1
 
-            v360 = Filter('v360', 'fisheye', cfg.of, 'lanc',
+            v360 = Filter('v360', 'fisheye', task.of, 'lanc',
                           iv_fov=segment.iv_fov,
                           ih_fov=segment.ih_fov,
-                          h_fov=cfg.oh_fov,
-                          v_fov=cfg.ov_fov,
+                          h_fov=task.oh_fov,
+                          v_fov=task.ov_fov,
                           alpha_mask=1,
-                          w=cfg.ow or SIDE,
-                          h=cfg.oh or SIDE)
+                          w=task.ow or SIDE,
+                          h=task.oh or SIDE)
             filters = [Filter(filter_str) for filter_str in segment.extra_video_filter] + [v360]
 
             filter_seqs.extend([
@@ -323,27 +323,27 @@ def make_video(cfg: Config):
                     filter_seqs.append(FilterSeq(concat_inputs, ['video'], [Filter('concat', n=len(segments), v=1, a=0)]))
 
     ffmpeg_command.filter_graph = FilterGraph(filter_seqs)
-    if cfg.do_stab:
+    if task.do_stab:
         ffmpeg_command.outputs.append(FFMpegCommand.Output(outputs=['-f', 'null', '-']))
     else:
         ffmpeg_command.outputs.append(video_output := FFMpegCommand.Output())
         video_output.mappings.extend(['-map', '[video]'])
-        if any_do_audio and not cfg.separate_audio:
+        if any_do_audio and not task.separate_audio:
             video_output.mappings.extend(['-map', '[audio]'])
-        video_output.codecs.extend(['-c:v', cfg.video_codec])
-        if cfg.bitrate:
-            video_output.codecs.extend(['-vb', cfg.bitrate])
-        video_output.codecs.extend(['-pix_fmt', cfg.pixel_format])
-        video_output.codecs.extend(['-preset', cfg.preset])
-        if cfg.x264_frame_packing:
+        video_output.codecs.extend(['-c:v', task.video_codec])
+        if task.bitrate:
+            video_output.codecs.extend(['-vb', task.bitrate])
+        video_output.codecs.extend(['-pix_fmt', task.pixel_format])
+        video_output.codecs.extend(['-preset', task.preset])
+        if task.x264_frame_packing:
             video_output.codecs.extend(['-x264-params', 'frame_packing=3'])
 
-        if any_do_audio and not cfg.separate_audio:
-            video_output.codecs.extend(['-c:a', cfg.audio_codec, '-ab', cfg.audio_bitrate])
+        if any_do_audio and not task.separate_audio:
+            video_output.codecs.extend(['-c:a', task.audio_codec, '-ab', task.audio_bitrate])
         video_output.outputs.extend(['-t', fts(total_duration)])
         video_output.outputs.extend([out])
 
-        if any_do_audio and cfg.separate_audio:
+        if any_do_audio and task.separate_audio:
             ffmpeg_command.outputs.append(audio_output := FFMpegCommand.Output())
             audio_output.mappings.extend(['-map', f'[audio]'])
             audio_output.codecs.extend(['-c:a', 'pcm_s16le'])
@@ -361,7 +361,7 @@ def make_video(cfg: Config):
     print(f'num_frames={num_frames}')
     print(f'Output Filename: "{out}"')
 
-    if cfg.do_print:
+    if task.do_print:
         ffmpeg_command.print()
         exit()
 
@@ -429,7 +429,7 @@ def make_video(cfg: Config):
                 if hasattr(proc, 'close'):
                     proc.close
             elif i == 2:
-                if cfg.ffmpeg_verbose:
+                if task.ffmpeg_verbose:
                     tqdm.write(proc.match.group(0).decode(), end='')
         pbar and pbar.update(num_frames - last_frame)
     except KeyboardInterrupt:

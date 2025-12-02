@@ -7,7 +7,7 @@ from numpy.typing import ArrayLike
 from scipy import signal
 from tqdm import tqdm
 
-from .config import Config
+from .task import Task
 from .filters import Filter, FilterSeq, FilterGraph, fts
 from .shell import FFMpegCommand
 
@@ -15,12 +15,12 @@ from .shell import FFMpegCommand
 __all__ = ['get_samples', 'find_offset']
 
 
-def get_samples(cfg: Config, segment: Config.Segment, param: str, duration: float, sample_rate: int) -> ArrayLike:
+def get_samples(task: Task, segment: Task.Segment, param: str, duration: float, sample_rate: int) -> ArrayLike:
     desc = f'Extracting samples ({param[0].upper()} eye)'
     filenames = getattr(segment, param)
-    command = FFMpegCommand(cfg.ffmpeg_path)
-    if cfg.threads:
-         command.general_params.extend(['-threads', str(cfg.threads)])
+    command = FFMpegCommand(task.ffmpeg_path)
+    if task.threads:
+         command.general_params.extend(['-threads', str(task.threads)])
     command.general_params.extend(['-hide_banner', '-loglevel', 'warning'])
     for fn in filenames:
         command.inputs.append(['-i', fn])
