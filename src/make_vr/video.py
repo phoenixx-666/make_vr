@@ -11,10 +11,11 @@ import pexpect.popen_spawn
 from tqdm import tqdm
 
 from .audio import get_samples, find_offset
-from .task import Task
+from .cache import Cache
 from .filters import Filter, FilterSeq, FilterGraph, fts
-from .fs import probe, get_output_filename, resolve_existing, swap_extension
+from .fs import probe, get_output_filename, get_modified_date, resolve_existing, swap_extension
 from .shell import FFMpegCommand, terminate
+from .task import Task
 
 
 __all__ = ['make_video']
@@ -75,6 +76,17 @@ def d_to_hms(d: float) -> str:
     return f'{m:02d}:{s}'
 
 
+def index_from_time_diff(time_diff: float) -> tuple[int, float]:
+    if time_diff < 0.0:
+        time_diff = -time_diff
+        cut_index = 0
+    elif time_diff > 0.0:
+        cut_index = 1
+    else:
+        cut_index = -1
+    return cut_index, time_diff
+
+
 def make_video(task: Task):
     try:
         import tzlocal
@@ -127,21 +139,27 @@ def make_video(task: Task):
             cut_index = int(segment.override_offset[0])
             time_diff = duration(segment.override_offset[1])
         else:
-            if segment.wav_duration is not None:
-                wav_duration = segment.wav_duration
+            mod_date1 = get_modified_date(segment.left[0])
+            mod_date2 = get_modified_date(segment.right[0])
+            if (not Cache().is_ignoring('sync')) and \
+                    Cache().get_modified(segment.left[0]) == mod_date1 and \
+                    Cache().get_modified(segment.right[0]) == mod_date2:
+                time_diff = Cache().get_sync(segment.left[0], segment.right[0])
             else:
-                wav_duration = abs(d_l - d_r) + 60.0
-            print(f'wav_duration={d_to_hms(wav_duration)} ({fts(wav_duration)} s)')
-            left_a = get_samples(task, segment, 'left', wav_duration, sample_rate)
-            right_a = get_samples(task, segment, 'right', wav_duration, sample_rate)
-            time_diff = find_offset(left_a, right_a, sample_rate)
-            if time_diff < 0.0:
-                time_diff = -time_diff
-                cut_index = 0
-            elif time_diff > 0.0:
-                cut_index = 1
-            else:
-                cut_index = -1
+                time_diff = None
+
+            if time_diff is None:
+                if segment.wav_duration is not None:
+                    wav_duration = segment.wav_duration
+                else:
+                    wav_duration = abs(d_l - d_r) + 60.0
+                print(f'wav_duration={d_to_hms(wav_duration)} ({fts(wav_duration)} s)')
+                left_a = get_samples(task, segment, 'left', wav_duration, sample_rate)
+                right_a = get_samples(task, segment, 'right', wav_duration, sample_rate)
+                time_diff = find_offset(left_a, right_a, sample_rate)
+                if not Cache().is_ignoring('sync'):
+                    Cache().set_sync(segment.left[0], mod_date1, segment.right[0], mod_date2, time_diff)
+            cut_index, time_diff = index_from_time_diff(time_diff)
 
         if segment.extra_offset:
             time_diff += segment.extra_offset
@@ -353,6 +371,8 @@ def make_video(task: Task):
     # import shlex
     # print(shlex.join(ffmpeg_command.as_list()))
     # exit()
+
+    Cache().save_if_updated()
 
     num_frames = round(float(total_duration * fps))
     if len(segments) > 1:

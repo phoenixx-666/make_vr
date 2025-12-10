@@ -2,13 +2,13 @@ from pydantic import Field, ValidationError
 from typing import Any, ClassVar, Optional
 
 from .shell import terminate
-from .tools import Angle, ImageQuality, NEStr, NNInt, PosInt, SingletonModel, ValidatedModel
+from .tools import Angle, ImageQuality, NEStr, NNInt, PosInt, SingletonMixin, ValidatedModel
 
 
 __all__ = ['Config']
 
 
-class Config(SingletonModel, ValidatedModel):
+class Config(SingletonMixin, ValidatedModel):
     class Options(ValidatedModel):
         threads: Optional[NNInt] = None
 

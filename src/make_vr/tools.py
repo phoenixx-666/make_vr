@@ -5,13 +5,14 @@ from typing import Annotated, Iterable, Iterator, TypeVar
 
 __all__ = [
     'with_each',
+    'duration',
     'NEStr',
     'NNFloat',
     'NNInt',
     'PosInt',
     'ImageQuality',
     'Angle',
-    'SingletonModel',
+    'SingletonMixin',
     'ValidatedModel',
 ]
 
@@ -34,6 +35,12 @@ class with_each(Iterable[tuple[_T1, _T2]]):
 
     def __iter__(self):
         return self.Iterator(self._item, self._iterable)
+
+
+def duration(s: str | float | int) -> float:
+    if isinstance(s, (float, int)):
+        return NNFloat(s)
+    return NNFloat(sum(float(seg) * (60.0 ** i) for i, seg in enumerate(reversed(s.split(':')))))
 
 
 class AnnotatedConverter:
@@ -76,9 +83,9 @@ ImageQuality = AnnotatedConverter['image quality', int, Ge(1), Le(31)]
 Angle = AnnotatedConverter['angle', float, Gt(0.0), Le(360.0)]
 
 
-class SingletonModel:
+class SingletonMixin:
     __instance = None
-    __need_init = True
+    _need_init = True
 
     def __new__(cls, *args, **kwargs):
         if cls.__instance is None:
@@ -86,9 +93,9 @@ class SingletonModel:
         return cls.__instance
 
     def __init__(self, *args, **kwargs):
-        if self.__need_init:
+        if self._need_init:
             super().__init__(*args, **kwargs)
-            self.__need_init = False
+            self._need_init = False
 
 
 class ValidatedModel(BaseModel):

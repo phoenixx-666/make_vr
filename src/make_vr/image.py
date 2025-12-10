@@ -1,9 +1,9 @@
 import subprocess as sp
 
-from .task import Task
 from .filters import Filter, FilterSeq, FilterGraph
 from .fs import get_output_filename
 from .shell import FFMpegCommand
+from .task import Task
 
 
 __all__ = ['make_image']

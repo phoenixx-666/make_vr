@@ -7,9 +7,9 @@ from numpy.typing import ArrayLike
 from scipy import signal
 from tqdm import tqdm
 
-from .task import Task
 from .filters import Filter, FilterSeq, FilterGraph, fts
 from .shell import FFMpegCommand
+from .task import Task
 
 
 __all__ = ['get_samples', 'find_offset']

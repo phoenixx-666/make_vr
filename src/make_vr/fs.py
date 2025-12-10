@@ -1,4 +1,3 @@
-import argparse
 from dataclasses import dataclass
 from datetime import datetime
 from exif import Image
@@ -14,7 +13,7 @@ from typing import Any
 
 from .cache import Cache
 from .config import Config
-from .shell import terminate
+from .shell import CLIArgs, terminate
 from .tools import with_each
 
 from typing import TYPE_CHECKING
@@ -22,7 +21,7 @@ if TYPE_CHECKING:
     from .task import Task
 
 
-__all__ = ['Input', 'probe', 'get_output_filename', 'swap_extension',
+__all__ = ['Input', 'probe', 'get_modified_date', 'get_output_filename', 'swap_extension',
            'resolve_existsing', 'find_closest', 'validate_input_files']
 
 
@@ -45,7 +44,11 @@ def probe(ffprobe_path: str, fn: str) -> Any:
         return json.load(proc.stdout)
 
 
-def get_creation_date(ffprobe_path: str, fn: str) -> datetime:
+def get_modified_date(fn: str) -> datetime:
+    return datetime.fromtimestamp(os.path.getmtime(fn))
+
+
+def get_creation_date(ffprobe_path: str, fn: str) -> datetime | None:
     json_data = probe(ffprobe_path, fn)
     try:
         date = json_data['format']['tags']['creation_time']
@@ -64,6 +67,19 @@ def get_creation_date(ffprobe_path: str, fn: str) -> datetime:
         ...
 
     return None
+
+
+def get_creation_date_cached(fn: str) -> datetime | None:
+    if Cache().is_ignoring('match'):
+        return get_creation_date(CLIArgs().ffprobe_path, fn)
+
+    mod_date = get_modified_date(fn)
+    if (Cache().get_modified(fn) == mod_date) and ((cache_create_date := Cache().get_match(fn)) is not None):
+        creation_date = cache_create_date
+    else:
+        creation_date = get_creation_date(CLIArgs().ffprobe_path, fn)
+        Cache().set_match(fn, mod_date, creation_date)
+    return creation_date
 
 
 def rename(fn: str) -> str:
@@ -129,10 +145,10 @@ def get_output_filename(task: Task) -> str:
     return resolve_existing(task, fn)
 
 
-def validate_input_files(args: argparse.Namespace) -> Input:
-    left = [list(map(os.path.normpath, left_segment)) for left_segment in (args.left or [])]
-    right = [list(map(os.path.normpath, right_segment)) for right_segment in (args.right or [])]
-    audio = [list(map(os.path.normpath, audio_segment)) for audio_segment in (args.audio or [])]
+def validate_input_files() -> Input:
+    left = [list(map(os.path.normpath, left_segment)) for left_segment in (CLIArgs().left or [])]
+    right = [list(map(os.path.normpath, right_segment)) for right_segment in (CLIArgs().right or [])]
+    audio = [list(map(os.path.normpath, audio_segment)) for audio_segment in (CLIArgs().audio or [])]
 
     if not (left or right):
         terminate('Must specify at least one input')
@@ -146,7 +162,7 @@ def validate_input_files(args: argparse.Namespace) -> Input:
             terminate('No input specified for the right eye')
         right = [[Config().inputs.right_dir]]
 
-    do_stab = (args.stab is not None) or (args.stab_channel is not None)
+    do_stab = (CLIArgs().stab is not None) or (CLIArgs().stab_channel is not None)
     left_is_dir = right_is_dir = False
 
     if do_stab and not (len(left) == len(right) == 1):
@@ -225,28 +241,17 @@ def validate_input_files(args: argparse.Namespace) -> Input:
 
         pbar = tqdm(desc='Retrieving creation dates', total=sum(map(len, dir_files.values())))
         for dir_name, (i, (file_name, _)) in itertools.chain.from_iterable(map(lambda fwd: with_each(fwd[0], enumerate(fwd[1])), dir_files.items())):
-            mod_ts = os.path.getmtime(file_name)
-            mod_date = datetime.fromtimestamp(mod_ts)
-            if (file_data := Cache().get_match(file_name)) and file_data.modified_date == mod_date:
-                creation_date = file_data.creation_date
-            else:
-                creation_date = get_creation_date(args.ffprobe_path, file_name)
-                Cache().set_match(file_name, mod_date, creation_date)
-
+            creation_date = get_creation_date_cached(file_name)
             dir_files[dir_name][i] = (file_name, creation_date)
             pbar.update()
         pbar.close()
-
-        Cache().cleanup()
-        Cache().save_if_updated()
 
         for dir_name, file_list in dir_files.items():
             dir_files[dir_name] = list(filter(lambda item: item[1] is not None, file_list))
 
         for i, (dir_name, right_is_dir) in dir_segment.items():
             target = left[i][0] if right_is_dir else right[i][0]
-            target_date = get_creation_date(args.ffprobe_path, target)
-            if not target_date:
+            if not (target_date := get_creation_date_cached(target)):
                 terminate(f'Unable to determine creation date for the file "{target}"')
             diff = float('inf')
             closest = None
@@ -257,7 +262,7 @@ def validate_input_files(args: argparse.Namespace) -> Input:
 
             if closest:
                 prompt = f'Found file "{closest}" matching "{target}" with difference of {diff:.3f} seconds.'
-                if args.ask_match:
+                if CLIArgs().ask_match:
                     print(f'{prompt} Continue? [Y/n]', end=None)
                     while True:
                         resp = getch()
@@ -278,5 +283,7 @@ def validate_input_files(args: argparse.Namespace) -> Input:
             else:
                 ft = 'image' if do_image else 'video'
                 terminate(f'Unable to find corresponding {ft} for the file "{target}"')
+
+        Cache().save_if_updated()
 
     return Input(do_image, do_stab, [Input.Segment(*lra) for lra in zip(left, right, audio)])
