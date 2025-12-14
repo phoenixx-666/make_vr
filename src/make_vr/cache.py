@@ -5,7 +5,7 @@ from pathlib import Path
 from pydantic import Field, PrivateAttr, ValidationError, field_serializer, field_validator
 from typing import Optional
 
-from .shell import CLIArgs
+from .shell import CLIArgs, warning
 from .tools import NEStr, SingletonMixin, ValidatedModel
 
 
@@ -38,7 +38,7 @@ class Cache(SingletonMixin, ValidatedModel):
             self._cleanup()
 
         except (IOError, OSError, json.JSONDecodeError, ValidationError) as e:
-            print(f'Unable to read cache: {e}')
+            warning(f'Unable to read cache: {e}')
             super().__init__()
 
         self._ignore = CLIArgs().ignore_cache
@@ -79,7 +79,7 @@ class Cache(SingletonMixin, ValidatedModel):
                 f.write(encoded_json)
             self._updated = False
         except (IOError, OSError, UnicodeEncodeError) as e:
-            print(f'There was an error while saving cache: {e}')
+            warning(f'There was an error while saving cache: {e}')
 
     def is_ignoring(self, name: str) -> bool:
         if self._ignore is None:

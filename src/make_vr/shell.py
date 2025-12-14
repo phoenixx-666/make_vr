@@ -1,5 +1,7 @@
 import argparse
+from collections import defaultdict
 from dataclasses import astuple, dataclass, field
+from enum import Enum, auto
 import itertools
 from io import StringIO
 import shlex
@@ -10,7 +12,7 @@ from .filters import FilterGraph
 from .tools import SingletonMixin, Angle, ImageQuality, NEStr, NNInt, PosInt, duration
 
 
-__all__ = ['CLIArgs', 'FFMpegCommand', 'terminate']
+__all__ = ['CLIArgs', 'FFMpegCommand', 'LogLevel', 'message', 'info', 'success', 'warning', 'error', 'terminate']
 
 
 _DEFAULT_USYNC = 5
@@ -171,6 +173,47 @@ class FFMpegCommand:
         stream.write(buffer.getvalue())
 
 
-def terminate(msg: str, exit_code=1):
-    sys.stderr.write(f'\x1b[31m{msg}\x1b[0m\n')
+class LogLevel(Enum):
+    Info = auto()
+    Success = auto()
+    Warning = auto()
+    Error = auto()
+
+
+_log_level_to_color = defaultdict(int, {
+    LogLevel.Info: 93,
+    LogLevel.Success: 92,
+    LogLevel.Warning: 33,
+    LogLevel.Error: 31,
+})
+
+
+def message(msg: str, end: str = ..., level = LogLevel.Info):
+    if end is ...:
+        end = '\n'
+    elif end is None:
+        end = ''
+    color = _log_level_to_color[level]
+    sys.stderr.write(f'\033[{color}m{msg}\033[0m{end}')
+    sys.stderr.flush()
+
+
+def info(msg: str, end: str = ...):
+    message(msg, end, LogLevel.Info)
+
+
+def success(msg: str, end: str = ...):
+    message(msg, end, LogLevel.Success)
+
+
+def warning(msg: str, end: str = ...):
+    message(msg, end, LogLevel.Warning)
+
+
+def error(msg: str, end: str = ...):
+    message(msg, end, LogLevel.Error)
+
+
+def terminate(msg: str, exit_code=1, end: str = ..., level = LogLevel.Error):
+    message(msg, end, level)
     exit(exit_code)

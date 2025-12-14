@@ -13,7 +13,7 @@ from typing import Any
 
 from .cache import Cache
 from .config import Config
-from .shell import CLIArgs, terminate
+from .shell import CLIArgs, info, success, terminate
 from .tools import with_each
 
 from typing import TYPE_CHECKING
@@ -95,7 +95,7 @@ def resolve_existing(task: Task, fn: str) -> str:
         if task.rename:
             fn = rename(fn)
         elif not (task.do_print or task.overwrite):
-            print(f'File "{fn}" already exists. Overwrite? [y/N/r]', end=None)
+            info(f'File "{fn}" already exists. Overwrite? [y/N/r]', end=None)
             while True:
                 resp = getch()
                 try:
@@ -239,8 +239,10 @@ def validate_input_files() -> Input:
                 terminate(f'Input directory "{dir_name}" does not contain suitable files!')
             dir_files[dir_name] = file_list
 
-        pbar = tqdm(desc='Retrieving creation dates', total=sum(map(len, dir_files.values())))
-        for dir_name, (i, (file_name, _)) in itertools.chain.from_iterable(map(lambda fwd: with_each(fwd[0], enumerate(fwd[1])), dir_files.items())):
+        pbar = tqdm(desc='Retrieving creation dates', total=sum(map(len, dir_files.values())),
+                    bar_format='\033[93m{l_bar}{bar}{r_bar}\033[0m')
+        for dir_name, (i, (file_name, _)) in itertools.chain.from_iterable(
+                map(lambda fwd: with_each(fwd[0], enumerate(fwd[1])), dir_files.items())):
             creation_date = get_creation_date_cached(file_name)
             dir_files[dir_name][i] = (file_name, creation_date)
             pbar.update()
@@ -263,7 +265,7 @@ def validate_input_files() -> Input:
             if closest:
                 prompt = f'Found file "{closest}" matching "{target}" with difference of {diff:.3f} seconds.'
                 if CLIArgs().ask_match:
-                    print(f'{prompt} Continue? [Y/n]', end=None)
+                    success(f'{prompt} Continue? [Y/n]', end=None)
                     while True:
                         resp = getch()
                         try:
@@ -277,7 +279,7 @@ def validate_input_files() -> Input:
                         except UnicodeDecodeError:
                             terminate('Bad unicode character input')
                 else:
-                    print(prompt)
+                    success(prompt)
 
                 (right if right_is_dir else left)[i] = [closest]
             else:

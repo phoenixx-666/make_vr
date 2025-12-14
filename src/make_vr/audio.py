@@ -8,7 +8,7 @@ from scipy import signal
 from tqdm import tqdm
 
 from .filters import Filter, FilterSeq, FilterGraph, fts
-from .shell import FFMpegCommand
+from .shell import FFMpegCommand, info, success
 from .task import Task
 
 
@@ -38,7 +38,8 @@ def get_samples(task: Task, segment: Task.Segment, param: str, duration: float, 
     byte_count = math.ceil(duration * sample_rate) * np.dtype(np.int16).itemsize
 
     with (sp.Popen(command.as_list(), stdout=sp.PIPE) as proc,
-          tqdm(total=byte_count, unit='B', unit_scale=True, unit_divisor=1024, desc=desc) as pbar):
+          tqdm(total=byte_count, unit='B', unit_scale=True, unit_divisor=1024, desc=desc,
+               bar_format='\033[93m{l_bar}{bar}{r_bar}\033[0m') as pbar):
         bio = io.BytesIO()
 
         while bts := proc.stdout.read(0x10000):
@@ -52,9 +53,9 @@ def get_samples(task: Task, segment: Task.Segment, param: str, duration: float, 
 
 
 def find_offset(audio1: ArrayLike, audio2: ArrayLike, rate: int) -> float:
-    print(f'Calculating offset between two videos...', end='')
+    info(f'Calculating offset between two videos...', end='')
     correlation = signal.correlate(audio2, audio1, mode='full')
     lags = signal.correlation_lags(audio2.size, audio1.size, mode='full')
     lag = lags[np.argmax(correlation)] / rate
-    print('Done.')
+    success('Done.')
     return lag

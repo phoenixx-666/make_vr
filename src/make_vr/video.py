@@ -14,7 +14,7 @@ from .audio import get_samples, find_offset
 from .cache import Cache
 from .filters import Filter, FilterSeq, FilterGraph, fts
 from .fs import probe, get_output_filename, get_modified_date, resolve_existing, swap_extension
-from .shell import FFMpegCommand, terminate
+from .shell import FFMpegCommand, info, success, warning, error, terminate
 from .task import Task
 
 
@@ -129,7 +129,7 @@ def make_video(task: Task):
         if len(segments) > 1:
             text = f' SEGMENT {segment_index} '
             width = max(0, terminal_width - len(text))
-            print(f'{"=" * (width // 2)}{text}{"=" * (width // 2 + width % 2)}')
+            info(f'{"=" * (width // 2)}{text}{"=" * (width // 2 + width % 2)}')
 
         seg_md = metadata[segment_index - 1]
         d_l = sum(map(lambda m: m.duration, seg_md[0]))
@@ -153,7 +153,7 @@ def make_video(task: Task):
                     wav_duration = segment.wav_duration
                 else:
                     wav_duration = abs(d_l - d_r) + 60.0
-                print(f'wav_duration={d_to_hms(wav_duration)} ({fts(wav_duration)} s)')
+                info(f'wav_duration={d_to_hms(wav_duration)} ({fts(wav_duration)} s)')
                 left_a = get_samples(task, segment, 'left', wav_duration, sample_rate)
                 right_a = get_samples(task, segment, 'right', wav_duration, sample_rate)
                 time_diff = find_offset(left_a, right_a, sample_rate)
@@ -175,9 +175,9 @@ def make_video(task: Task):
 
         total_duration += duration
 
-        print(f'time_diff={d_to_hms(time_diff)} ({fts(time_diff)} s)')
-        print(f'cut_index={cut_index:d}')
-        print(f'duration={d_to_hms(duration)} ({fts(duration)} s)')
+        info(f'time_diff={d_to_hms(time_diff)} ({fts(time_diff)} s)')
+        info(f'cut_index={cut_index:d}')
+        info(f'duration={d_to_hms(duration)} ({fts(duration)} s)')
 
         inputs = []
         inputs_str = []
@@ -188,7 +188,7 @@ def make_video(task: Task):
                 inputs.append(k)
                 inputs_str.append(f'{k}:v:0')
 
-            print(inputs)
+            info(inputs)
 
             filters = []
 
@@ -376,10 +376,10 @@ def make_video(task: Task):
 
     num_frames = round(float(total_duration * fps))
     if len(segments) > 1:
-        print('=' * terminal_width)
-        print(f'total_duration={d_to_hms(total_duration)} ({fts(total_duration)} s)')
-    print(f'num_frames={num_frames}')
-    print(f'Output Filename: "{out}"')
+        info('=' * terminal_width)
+        info(f'total_duration={d_to_hms(total_duration)} ({fts(total_duration)} s)')
+    info(f'num_frames={num_frames}')
+    info(f'Output Filename: "{out}"')
 
     if task.do_print:
         ffmpeg_command.print()
@@ -388,14 +388,17 @@ def make_video(task: Task):
     proc = None
     pbar = None
 
+    task_prog = None
     if sys.platform == 'win32':
         try:
             import PyTaskbar
             task_prog = PyTaskbar.Progress()
             task_prog.init()
         except ImportError:
-            task_prog = PyTaskbarStub()
-    else:
+            pass
+        except:
+            warning('Error while initializing taskbar progress')
+    if not task_prog:
         task_prog = PyTaskbarStub()
 
     try:
@@ -410,6 +413,7 @@ def make_video(task: Task):
         ])
         last_frame = 0
         timestamps: deque[tuple[datetime.datetime, int]] = deque()
+        ffmpeg_output: deque[str] = deque(maxlen=150)
         while True:
             i = proc.expect_list(cpl, timeout=None)
             if i == 0:  # EOF
@@ -417,7 +421,7 @@ def make_video(task: Task):
             elif i == 1:
                 if not pbar:
                     pbar = tqdm(total=num_frames, smoothing=0.1, unit='f',
-                                bar_format='{l_bar}{bar}| [{elapsed}<{remaining}, f={n_fmt}, {rate_fmt}{postfix}]',
+                                bar_format='\033[93m{l_bar}{bar}| [{elapsed}<{remaining}, f={n_fmt}, {rate_fmt}{postfix}]\033[0m',
                                 postfix=f't={d_to_hms(0)}, x?, eta=?')
                     task_prog.setState('loading')
                     task_prog.setProgress(0)
@@ -449,12 +453,15 @@ def make_video(task: Task):
                 if hasattr(proc, 'close'):
                     proc.close
             elif i == 2:
+                line = proc.match.group(0).decode()
                 if task.ffmpeg_verbose:
-                    tqdm.write(proc.match.group(0).decode(), end='')
+                    tqdm.write(line, end='')
+                else:
+                    ffmpeg_output.append(line)
         pbar and pbar.update(num_frames - last_frame)
     except KeyboardInterrupt:
         if proc:
-            print('Progress was interrupted!')
+            warning('Progress was interrupted!')
             import signal
             proc.kill(signal.SIGTERM)
             task_prog.setState('normal')
@@ -463,4 +470,12 @@ def make_video(task: Task):
     finally:
         pbar and pbar.close()
         task_prog.setProgress(0)
-        print(f'Program finished at {datetime.datetime.now(tz).strftime(datetime_fmt)}')
+        msg = f'Program finished at {datetime.datetime.now(tz).strftime(datetime_fmt)}'
+        if proc and proc.exitstatus:
+            msg = f'{msg} with code {proc.exitstatus}'
+            if not task.ffmpeg_verbose:
+                for line in ffmpeg_output:
+                    warning(line, end=None)
+            error(msg)
+        else:
+            success(msg)
