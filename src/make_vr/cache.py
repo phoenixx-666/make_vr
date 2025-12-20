@@ -19,7 +19,7 @@ SyncDictSerialized = list[tuple[str, str, float]]
 
 class Cache(SingletonMixin, ValidatedModel):
     modified: dict[NEStr, datetime] = Field(default_factory=dict, alias='m')
-    created: dict[NEStr, datetime] = Field(default_factory=dict, alias='c')
+    created: dict[NEStr, Optional[datetime]] = Field(default_factory=dict, alias='c')
     sync: SyncDict = Field(default_factory=dict, alias='s')
 
     _updated: bool = PrivateAttr(default=False)
