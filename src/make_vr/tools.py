@@ -1,5 +1,6 @@
 from annotated_types import Ge, Gt, Le, Len
 from pydantic import BaseModel, ConfigDict, GetCoreSchemaHandler, TypeAdapter, ValidationError
+from pydantic._internal._model_construction import ModelMetaclass
 from typing import Annotated, Iterable, Iterator, TypeVar
 
 
@@ -12,7 +13,8 @@ __all__ = [
     'PosInt',
     'ImageQuality',
     'Angle',
-    'SingletonMixin',
+    'Singleton',
+    'SingletonModel',
     'ValidatedModel',
 ]
 
@@ -83,19 +85,16 @@ ImageQuality = AnnotatedConverter['image quality', int, Ge(1), Le(31)]
 Angle = AnnotatedConverter['angle', float, Gt(0.0), Le(360.0)]
 
 
-class SingletonMixin:
-    __instance = None
-    _need_init = True
+class Singleton(type):
+    _instances = {}
+    def __call__(cls, *args, **kwargs):
+        if cls not in cls._instances:
+            cls._instances[cls] = super().__call__(*args, **kwargs)
+        return cls._instances[cls]
 
-    def __new__(cls, *args, **kwargs):
-        if cls.__instance is None:
-            cls.__instance = super().__new__(cls)
-        return cls.__instance
 
-    def __init__(self, *args, **kwargs):
-        if self._need_init:
-            super().__init__(*args, **kwargs)
-            self._need_init = False
+class SingletonModel(ModelMetaclass, Singleton):
+    pass
 
 
 class ValidatedModel(BaseModel):

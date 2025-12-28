@@ -6,7 +6,7 @@ from pydantic import Field, PrivateAttr, ValidationError, field_serializer, fiel
 from typing import Optional
 
 from .shell import CLIArgs, warning
-from .tools import NEStr, SingletonMixin, ValidatedModel
+from .tools import NEStr, SingletonModel, ValidatedModel
 
 
 __all__ = ['Cache']
@@ -17,7 +17,7 @@ SyncDict = dict[tuple[NEStr, NEStr], float]
 SyncDictSerialized = list[tuple[str, str, float]]
 
 
-class Cache(SingletonMixin, ValidatedModel):
+class Cache(ValidatedModel, metaclass=SingletonModel):
     modified: dict[NEStr, datetime] = Field(default_factory=dict, alias='m')
     created: dict[NEStr, Optional[datetime]] = Field(default_factory=dict, alias='c')
     sync: SyncDict = Field(default_factory=dict, alias='s')
@@ -26,9 +26,6 @@ class Cache(SingletonMixin, ValidatedModel):
     _ignore: Optional[tuple[str, ...]] = PrivateAttr()
 
     def __init__(self):
-        if not self._need_init:
-            return
-
         try:
             json_data: dict = {}
             if os.path.isfile(_cache_path):

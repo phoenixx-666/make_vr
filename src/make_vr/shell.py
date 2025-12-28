@@ -9,7 +9,7 @@ import sys
 from typing import ClassVar, TextIO
 
 from .filters import FilterGraph
-from .tools import SingletonMixin, Angle, ImageQuality, NEStr, NNInt, PosInt, duration
+from .tools import Singleton, Angle, ImageQuality, NEStr, NNInt, PosInt, duration
 
 
 __all__ = ['CLIArgs', 'FFMpegCommand', 'LogLevel', 'message', 'info', 'success', 'warning', 'error', 'terminate']
@@ -18,11 +18,8 @@ __all__ = ['CLIArgs', 'FFMpegCommand', 'LogLevel', 'message', 'info', 'success',
 _DEFAULT_USYNC = 5
 
 
-class CLIArgs(SingletonMixin, argparse.Namespace):
+class CLIArgs(argparse.Namespace, metaclass=Singleton):
     def __init__(self):
-        if not self._need_init:
-            return
-
         args = self._make_parser().parse_args()
         super().__init__(**dict(args._get_kwargs()))
 
