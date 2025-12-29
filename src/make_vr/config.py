@@ -2,7 +2,8 @@ from pydantic import Field, ValidationError
 from typing import Any, ClassVar, Optional
 
 from .shell import terminate
-from .tools import Angle, ImageQuality, NEStr, NNInt, PosInt, SingletonModel, ValidatedModel
+from .tools import SingletonModel, ValidatedModel
+from .tools.types import Angle, ImageQuality, NEStr, NNInt, PosInt
 
 
 __all__ = ['Config']

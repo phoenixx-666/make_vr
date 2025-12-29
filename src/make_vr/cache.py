@@ -6,7 +6,8 @@ from pydantic import Field, PrivateAttr, ValidationError, field_serializer, fiel
 from typing import Optional
 
 from .shell import CLIArgs, warning
-from .tools import NEStr, SingletonModel, ValidatedModel
+from .tools import SingletonModel, ValidatedModel
+from .tools.types import NEStr
 
 
 __all__ = ['Cache']

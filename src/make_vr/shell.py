@@ -9,7 +9,8 @@ import sys
 from typing import ClassVar, TextIO
 
 from .filters import FilterGraph
-from .tools import Singleton, Angle, ImageQuality, NEStr, NNInt, PosInt, duration
+from .tools import Singleton, duration
+from .tools.types import Angle, ImageQuality, NEStr, NNInt, PosInt
 
 
 __all__ = ['CLIArgs', 'FFMpegCommand', 'LogLevel', 'message', 'info', 'success', 'warning', 'error', 'terminate']
