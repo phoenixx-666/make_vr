@@ -16,6 +16,7 @@ from .filters import Filter, FilterSeq, FilterGraph, fts
 from .fs import probe, get_output_filename, get_modified_date, resolve_existing, swap_extension
 from .shell import FFMpegCommand, info, success, warning, error, terminate
 from .task import Task
+from .tools import duration
 
 
 __all__ = ['make_video']
@@ -164,20 +165,20 @@ def make_video(task: Task):
         if segment.extra_offset:
             time_diff += segment.extra_offset
 
-        durations = tuple(duration - segment.trim - (time_diff if i == cut_index else 0)
-                          for i, duration in enumerate((d_l, d_r)))
-        duration = (max if segment.fill_end else min)(durations)
+        durations = tuple(d - segment.trim - (time_diff if i == cut_index else 0)
+                          for i, d in enumerate((d_l, d_r)))
+        seg_duration = (max if segment.fill_end else min)(durations)
 
-        if segment.duration and segment.duration < duration:
-            duration = segment.duration
-            if segment.fill_end and duration <= min(durations):
+        if segment.duration and segment.duration < seg_duration:
+            seg_duration = segment.duration
+            if segment.fill_end and seg_duration <= min(durations):
                 segment.fill_end = False
 
-        total_duration += duration
+        total_duration += seg_duration
 
         info(f'time_diff={d_to_hms(time_diff)} ({fts(time_diff)} s)')
         info(f'cut_index={cut_index:d}')
-        info(f'duration={d_to_hms(duration)} ({fts(duration)} s)')
+        info(f'duration={d_to_hms(seg_duration)} ({fts(seg_duration)} s)')
 
         inputs = []
         inputs_str = []
@@ -210,7 +211,7 @@ def make_video(task: Task):
             if segment.fill_end:
                 ...
 
-            filters.append(Filter('trim', duration=duration))
+            filters.append(Filter('trim', duration=seg_duration))
             filters.append(vsd := Filter('vidstabdetect', result=out, fileformat='ascii'))
             if task.stab_args:
                 vsd.add_raw(task.stab_args)
@@ -261,7 +262,7 @@ def make_video(task: Task):
                         all_filters[i].append(Filter('framerate', fps=fps))
 
                 if segment.fill_end:
-                    if duration == durations[i]:
+                    if seg_duration == durations[i]:
                         all_filters[i].append(Filter('split'))
                         all_outputs[i].append(f'filler_raw{suffix}')
                     else:
@@ -287,7 +288,7 @@ def make_video(task: Task):
                     Filter('trim', start=min(durations)),
                     Filter('setpts', f'PTS-STARTPTS'),
                 ]))
-                if duration == durations[1]:
+                if seg_duration == durations[1]:
                     filter_seqs.reverse()
             filter_seqs.extend([
                 FilterSeq([f'left_raw{suffix}'], [f'left{suffix}'], filters),
@@ -302,8 +303,8 @@ def make_video(task: Task):
             if fade_in:
                 video_fs.filters.append(Filter('fade', t='in', st=0, d=fade_in))
             if fade_out:
-                video_fs.filters.append(Filter('fade', t='out', st=duration - fade_out, d=fade_out))
-            video_fs.filters.append(Filter('trim', duration=duration))
+                video_fs.filters.append(Filter('fade', t='out', st=seg_duration - fade_out, d=fade_out))
+            video_fs.filters.append(Filter('trim', duration=seg_duration))
 
             if segment.do_audio:
                 audio_inputs = [f'{i}:a:0' for i in (audio_inputs if segment.external_audio else [left_inputs, right_inputs][segment.channel])]
@@ -317,14 +318,14 @@ def make_video(task: Task):
                 if fade_in:
                     audio_filters.append(Filter('afade', t='in', st=0, d=fade_in))
                 if fade_out:
-                    audio_filters.append(Filter('afade', t='out', st=duration - fade_out, d=fade_out))
-                audio_filters.append(Filter('atrim', duration=duration))
+                    audio_filters.append(Filter('afade', t='out', st=seg_duration - fade_out, d=fade_out))
+                audio_filters.append(Filter('atrim', duration=seg_duration))
                 filter_seqs.append(FilterSeq(audio_inputs, [f'audio{suffix}'], audio_filters))
 
             elif any_do_audio:
                 ffmpeg_command.inputs.append(['-f', 'lavfi',  '-i', Filter(
                     'anullsrc', channel_layout=channel_layout, sample_rate=sample_rate).render()])
-                filter_seqs.append(FilterSeq([f'{k}:a:0'], [f'audio{suffix}'], [Filter('atrim', duration=duration)]))
+                filter_seqs.append(FilterSeq([f'{k}:a:0'], [f'audio{suffix}'], [Filter('atrim', duration=seg_duration)]))
                 k += 1
 
             input_index = k

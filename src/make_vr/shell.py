@@ -58,7 +58,9 @@ class CLIArgs(SingletonMixin, argparse.Namespace):
         arg_group.add_argument('-f', '--fade', action='append', type=duration, nargs='+', help='Add fade effect in the beginning and the end of the video segment')
         arg_group.add_argument('-c', '--channel', action='append', type=int, choices=[-1, 0, 1],
                                help='Use audio from the video file segment for the given eye, or -1 for no audio')
-        arg_group.add_argument('-d', '--duration', action='append', type=duration, help='Maximum duration of the output video segment [seconds or h:m:s]')
+        arg_group.add_argument('-d', '--duration', action='append', type=duration, nargs='?',
+                               help='Maximum duration of the output video segment [seconds or h:m:s]. '
+                                    'To specify automatic duration calculation for a segment provide this parameter with no argument')
         arg_group.add_argument('--offset', action='append', type=duration, help='Extra offset for the cut video segment [seconds or h:m:s]')
         arg_group.add_argument('--override-offset', action='append', nargs=2, metavar=('INPUT', 'OFFSET'), help='Override offset on specified input of video segment')
         arg_group.add_argument('--trim', '-T', action='append', type=duration, help='Time to trim video segment from the beginning, after the videos are synchronized')
