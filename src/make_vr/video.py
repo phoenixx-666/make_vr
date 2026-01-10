@@ -168,6 +168,8 @@ def make_video(task: Task):
         durations = tuple(d - segment.trim - (time_diff if i == cut_index else 0)
                           for i, d in enumerate((d_l, d_r)))
         seg_duration = (max if segment.fill_end else min)(durations)
+        if segment.fill_end:
+            extend_channel = 0 if (seg_duration == durations[1]) else 1
 
         if segment.duration and segment.duration < seg_duration:
             seg_duration = segment.duration
@@ -262,12 +264,12 @@ def make_video(task: Task):
                         all_filters[i].append(Filter('framerate', fps=fps))
 
                 if segment.fill_end:
-                    if seg_duration == durations[i]:
-                        all_filters[i].append(Filter('split'))
-                        all_outputs[i].append(f'filler_raw{suffix}')
-                    else:
-                        all_input_str[i].append(f'filler{suffix}')
+                    if extend_channel == i:
+                        all_input_str[i].append(f'filler_end{suffix}')
                         all_filters[i][0].kw_params['n'] += 1
+                    else:
+                        all_filters[i].append(Filter('split'))
+                        all_outputs[i].append(f'filler_end_raw{suffix}')
 
             v360 = Filter('v360', 'fisheye', task.of, 'lanc',
                           iv_fov=segment.iv_fov,
@@ -284,12 +286,10 @@ def make_video(task: Task):
                 FilterSeq(right_input_str, right_outputs, right_filters),
             ])
             if segment.fill_end:
-                filter_seqs.insert(1, FilterSeq([f'filler_raw{suffix}'], [f'filler{suffix}'], [
+                filter_seqs.insert(1, FilterSeq([f'filler_end_raw{suffix}'], [f'filler_end{suffix}'], [
                     Filter('trim', start=min(durations)),
                     Filter('setpts', f'PTS-STARTPTS'),
                 ]))
-                if seg_duration == durations[1]:
-                    filter_seqs.reverse()
             filter_seqs.extend([
                 FilterSeq([f'left_raw{suffix}'], [f'left{suffix}'], filters),
                 FilterSeq([f'right_raw{suffix}'], [f'right{suffix}'], filters),
