@@ -102,7 +102,7 @@ class Cache(SingletonMixin, ValidatedModel):
             for file_name in nonexistent:
                 del self.modified[file_name]
                 self.created.pop(file_name, None)
-                remove_sync |= (file_names for file_names in self.sync.keys() if file_name in file_names)
+                remove_sync |= set(file_names for file_names in self.sync.keys() if file_name in file_names)
             for file_names in remove_sync:
                 del self.sync[file_names]
             self._updated = True
