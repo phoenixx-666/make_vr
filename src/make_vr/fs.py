@@ -111,6 +111,7 @@ def resolve_existing(task: Task, fn: str) -> str:
                         exit()
                 except UnicodeDecodeError:
                     ...
+            info('')
     return fn
 
 
