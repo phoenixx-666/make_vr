@@ -31,7 +31,8 @@ classifiers = [
 
 [project.optional-dependencies]
 win32 = [
-  "PyTaskbarProject==0.0.8", # https://github.com/N3RDIUM/PyTaskbar/releases/tag/0.0.8
+  # https://github.com/N3RDIUM/PyTaskbar/releases/tag/0.0.8
+  "PyTaskbarProgress @ file:./deps/win32/PyTaskbarProgress-0.0.8-py3-none-any.whl"
 ]
 
 [project.scripts]
@@ -39,3 +40,6 @@ make_vr = "make_vr.__main__:main"
 
 [tool.hatch.build.targets.wheel]
 packages = ["src/make_vr"]
+
+[tool.hatch.metadata]
+allow-direct-references = true
